@@ -1,0 +1,29 @@
+{
+  "noteCommitmentHex": "0x1a2ab0d55f84cd6fbec196f2eccbc66e5cec6afbfc3ea6cbf25f32ff123e9162",
+  "nextStep": 3,
+  "currentBlinding": "0x2a57ba469d42a7e73f2bce22f1a17deeb74bcc16897fd18dcdd9a08a322e4335",
+  "currentAmount": "1000000000",
+  "currentLeaf": 40,
+  "currentDummyBlinding": "0x0000000000000000000000000000000000000000000000000000000000770633",
+  "relays": [
+    {
+      "step": 1,
+      "recipient": "GDOTQKZGW7J7DDAIHPFXNBLMAXBUSXLDPKX6AGDE7ROKI5YT5P3MAGAN",
+      "txHash": "c3889673a95916c65714eb37086f99e36cb3dcfbed8bc8358626649e22c1e810",
+      "changeAmount": "3000000000"
+    },
+    {
+      "step": 2,
+      "recipient": "GDOZVXRBV6C5RLZOM63XNZK25DPMQRGPUERZRJEER6VSLGDWMLARTKU6",
+      "txHash": "eb530d11d6038d94b171fd83ac7fb7528ee33b487fe5739e65edf771d03072bc",
+      "changeAmount": "2000000000"
+    },
+    {
+      "step": 3,
+      "recipient": "GD6RIFGJYUAMXUFNKMDXK7WF6W73ZVAG4QP5J36UVNU5AXMVS2MTBLVR",
+      "txHash": "23d577d1c9a83f3dedacad4896120b035ed04f26c2d9c71aa0bd430ffd5ad354",
+      "changeAmount": "1000000000"
+    }
+  ],
+  "changeNoteCommitmentHex": "0x05b8089b61ecdd036248f30901142b42402d0214664a55db4f7675696942e525"
+}
