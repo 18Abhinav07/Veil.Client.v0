@@ -1,0 +1,44 @@
+{
+  "createdAt": "2026-07-01T08:26:43.183Z",
+  "baseUrl": "http://127.0.0.1:3014",
+  "chrome": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "screenshots": [
+    {
+      "name": "admin-desktop",
+      "path": "/Users/18abhinav07/Documents/Brain/10-Projects/Web3-Builds/private-payments-archive/BUILD/frontend/market-visual-proof/admin-desktop.png",
+      "sizeBytes": 115465,
+      "url": "http://127.0.0.1:3014/admin/markets/preview?marketUiPreview=true"
+    },
+    {
+      "name": "market-desktop",
+      "path": "/Users/18abhinav07/Documents/Brain/10-Projects/Web3-Builds/private-payments-archive/BUILD/frontend/market-visual-proof/market-desktop.png",
+      "sizeBytes": 170565,
+      "url": "http://127.0.0.1:3014/market/preview?marketUiPreview=true"
+    },
+    {
+      "name": "market-portfolio-desktop",
+      "path": "/Users/18abhinav07/Documents/Brain/10-Projects/Web3-Builds/private-payments-archive/BUILD/frontend/market-visual-proof/market-portfolio-desktop.png",
+      "sizeBytes": 203735,
+      "url": "http://127.0.0.1:3014/market/preview?marketUiPreview=true&view=portfolio&tab=notes"
+    },
+    {
+      "name": "market-mobile",
+      "path": "/Users/18abhinav07/Documents/Brain/10-Projects/Web3-Builds/private-payments-archive/BUILD/frontend/market-visual-proof/market-mobile.png",
+      "sizeBytes": 103545,
+      "url": "http://127.0.0.1:3014/market/preview?marketUiPreview=true"
+    },
+    {
+      "name": "market-detail-desktop",
+      "path": "/Users/18abhinav07/Documents/Brain/10-Projects/Web3-Builds/private-payments-archive/BUILD/frontend/market-visual-proof/market-detail-desktop.png",
+      "sizeBytes": 142294,
+      "url": "http://127.0.0.1:3014/market/preview/btc-higher-21d?marketUiPreview=true"
+    },
+    {
+      "name": "market-detail-mobile",
+      "path": "/Users/18abhinav07/Documents/Brain/10-Projects/Web3-Builds/private-payments-archive/BUILD/frontend/market-visual-proof/market-detail-mobile.png",
+      "sizeBytes": 106885,
+      "url": "http://127.0.0.1:3014/market/preview/btc-higher-21d?marketUiPreview=true"
+    }
+  ],
+  "previewGuard": "MARKET_UI_PREVIEW=true and NODE_ENV !== production"
+}
