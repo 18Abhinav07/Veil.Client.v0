@@ -557,7 +557,7 @@ function UnifiedWalletShell({
       </div>
 
       {/* MOBILE BOTTOM NAVIGATION BAR */}
-      <div className="fixed bottom-0 left-0 right-0 z-40 flex h-16 items-center justify-around border-t border-stone-200 bg-white/90 backdrop-blur-lg px-4 md:hidden">
+      <div className="fixed bottom-0 left-0 right-0 z-40 flex h-16 items-center justify-around border-t border-stone-200 bg-white/90 backdrop-blur-lg px-2 md:hidden">
         {[
           {
             id: "dashboard",
@@ -568,6 +568,18 @@ function UnifiedWalletShell({
             id: "activity",
             label: "Activity",
             icon: require("lucide-react").List,
+          },
+          {
+            id: "contacts",
+            label: "Contacts",
+            icon: require("lucide-react").Users,
+            badge: badges.contactRequests ?? 0,
+          },
+          {
+            id: "requests",
+            label: "Requests",
+            icon: require("lucide-react").ReceiptText,
+            badge: badges.paymentRequests ?? 0,
           },
           {
             id: "settings",
@@ -582,16 +594,23 @@ function UnifiedWalletShell({
               key={tab.id}
               onClick={() => setCurrentTab(tab.id as any)}
               type="button"
-              className={`flex flex-col items-center justify-center gap-1 w-16 h-12 rounded-xl transition ${
+              className={`flex flex-col items-center justify-center gap-1 w-14 h-12 rounded-xl transition relative ${
                 active
                   ? "text-stone-950 font-bold"
                   : "text-stone-500 font-medium"
               }`}
             >
-              <Icon
-                className={`h-5 w-5 ${active ? "text-stone-950" : "text-stone-400"}`}
-              />
-              <span className="text-[10px] tracking-wide">{tab.label}</span>
+              <div className="relative">
+                <Icon
+                  className={`h-5 w-5 ${active ? "text-stone-950" : "text-stone-400"}`}
+                />
+                {tab.badge && tab.badge > 0 ? (
+                  <span className="absolute -right-1.5 -top-1.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-red-500 px-0.5 text-[7px] font-bold text-white ring-2 ring-white">
+                    {tab.badge}
+                  </span>
+                ) : null}
+              </div>
+              <span className="text-[9px] tracking-wide">{tab.label}</span>
             </button>
           );
         })}
