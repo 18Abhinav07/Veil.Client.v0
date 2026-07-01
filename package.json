@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev -p 3002",
     "build": "next build",
-    "start": "next start -p 3002",
+    "start": "node scripts/railway-start.mjs",
+    "start:web": "next start -p 3002",
     "db:migrate": "node scripts/apply-migration.mjs",
     "db:seed:markets": "node scripts/seed-markets.mjs",
     "db:check": "node scripts/check-db-schema.mjs",
@@ -14,7 +15,7 @@
     "proof:market:visual": "node scripts/market-visual-proof.mjs",
     "worker:spend": "node scripts/spend-worker.mjs",
     "test": "node scripts/run-tests.mjs",
-    "smoke:check": "node --check scripts/deposit.mjs && node --check scripts/withdraw.mjs && node --check scripts/lane2-spike.mjs && node --check scripts/spend-worker.mjs && node --check scripts/apply-migration.mjs && node --check scripts/check-db-schema.mjs && node --check scripts/setup-market-env.mjs && node --check scripts/market-live-smoke.mjs && node --check scripts/market-e2e-run.mjs && node --check scripts/market-visual-proof.mjs",
+    "smoke:check": "node --check scripts/railway-start.mjs && node --check scripts/deposit.mjs && node --check scripts/withdraw.mjs && node --check scripts/lane2-spike.mjs && node --check scripts/spend-worker.mjs && node --check scripts/apply-migration.mjs && node --check scripts/check-db-schema.mjs && node --check scripts/setup-market-env.mjs && node --check scripts/market-live-smoke.mjs && node --check scripts/market-e2e-run.mjs && node --check scripts/market-visual-proof.mjs",
     "smoke:live:deposit": "node scripts/deposit.mjs",
     "smoke:live:lane1": "node scripts/withdraw.mjs",
     "smoke:live:lane2": "node scripts/lane2-spike.mjs",

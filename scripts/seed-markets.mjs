@@ -49,7 +49,7 @@ export function readMarketPoolConfig(env = process.env) {
     poolId: readString(env.MARKET_POOL_ID) || "veil_market_pool_v1",
     contractId,
     deployerKeyId,
-    treeDepth: readInteger(env.MARKET_POOL_TREE_DEPTH, 15),
+    treeDepth: readInteger(env.MARKET_POOL_TREE_DEPTH, 10),
     deploymentLedger: readInteger(env.MARKET_POOL_DEPLOYMENT_LEDGER, 1),
     status: readPoolStatus(contractId),
   };

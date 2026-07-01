@@ -24,6 +24,16 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+next-dev.log
+
+# runtime smoke/proof artifacts
+note.json
+withdraw-state.json
+stellar-address
+lane2-spike-result.json
+market-smoke-evidence.json
+market-visual-proof/
+test-page.js
 
 # local env files
 .env*.local

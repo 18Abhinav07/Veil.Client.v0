@@ -11,7 +11,9 @@ import { decimalToStellarUnits, formatStellarUnits } from "@/lib/publicWalletCor
 import type { WalletSecrets } from "@/lib/vaultCrypto";
 import { useWalletRealtimeEvent } from "./WalletRealtimeProvider";
 
-const POOL_ID = "veil_usdc_pool";
+const POOL_ID =
+  process.env.NEXT_PUBLIC_POOL_ID ??
+  "CBKWZP63CWSBAHPE2MO6ZQH2DDO3JEKKMYT2Z6WW3WW3FZQL2KGHV4QA";
 
 interface ContactView {
   id: string;

@@ -57,7 +57,7 @@ function readMarketPoolConfig() {
     poolId: readString(SERVER_ENV.MARKET_POOL_ID) || "veil_market_pool_v1",
     contractId,
     deployerKeyId,
-    treeDepth: readInteger(SERVER_ENV.MARKET_POOL_TREE_DEPTH, 15),
+    treeDepth: readInteger(SERVER_ENV.MARKET_POOL_TREE_DEPTH, 10),
     deploymentLedger: readInteger(SERVER_ENV.MARKET_POOL_DEPLOYMENT_LEDGER, 1),
     status: readPoolStatus(contractId),
   };
