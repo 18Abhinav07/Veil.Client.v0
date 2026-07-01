@@ -345,7 +345,10 @@ test("spend job step claim writes a durable lease for the runner", async () => {
 
   const sql = db.combinedSql();
   assert.match(sql, /s\.status = 'proof_ready'/i);
-  assert.match(sql, /s\.status = 'relaying' and s\.tx_hash is null and s\.lease_expires_at <= now\(\)/i);
+  assert.match(
+    sql,
+    /s\.status = 'relaying'[\s\S]*?and s\.tx_hash is null[\s\S]*?and \(s\.lease_expires_at is null or s\.lease_expires_at <= now\(\)\)/i,
+  );
   assert.match(sql, /s\.lease_expires_at <= now\(\)/i);
   assert.match(sql, /s\.status in \('queued', 'retry_wait'\) and s\.lease_expires_at is null/i);
   assert.match(sql, /lease_owner = \$6/i);
@@ -410,7 +413,10 @@ test("background worker can select active packages and reclaim expired proving s
   assert.match(sql, /s\.status in \('queued', 'retry_wait', 'proof_ready', 'proving', 'relaying'\)/i);
   assert.match(sql, /s\.tx_hash is null/i);
   assert.match(sql, /s\.status = 'proof_ready'/i);
-  assert.match(sql, /s\.status = 'relaying' and s\.tx_hash is null and s\.lease_expires_at <= now\(\)/i);
+  assert.match(
+    sql,
+    /s\.status = 'relaying'[\s\S]*?and s\.tx_hash is null[\s\S]*?and \(s\.lease_expires_at is null or s\.lease_expires_at <= now\(\)\)/i,
+  );
   assert.match(sql, /s\.lease_expires_at <= now\(\)/i);
   assert.match(sql, /s\.status in \('queued', 'retry_wait'\) and s\.lease_expires_at is null/i);
   assert.match(sql, /order by j\.created_at asc, s\.ordinal asc/i);

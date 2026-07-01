@@ -1714,7 +1714,11 @@ export async function getNextBackgroundSpendJobCandidate(
 	       and (s.retry_after is null or s.retry_after <= now())
 	       and (
 	         s.status = 'proof_ready'
-	         or (s.status = 'relaying' and s.tx_hash is null and s.lease_expires_at <= now())
+	         or (
+	           s.status = 'relaying'
+	           and s.tx_hash is null
+	           and (s.lease_expires_at is null or s.lease_expires_at <= now())
+	         )
 	         or s.lease_expires_at <= now()
 	         or (s.status in ('queued', 'retry_wait') and s.lease_expires_at is null)
 	       )
@@ -1857,7 +1861,11 @@ export async function claimNextRunnableSpendJobStep(
              and (s.retry_after is null or s.retry_after <= now())
 	             and (
 	               s.status = 'proof_ready'
-	               or (s.status = 'relaying' and s.tx_hash is null and s.lease_expires_at <= now())
+	               or (
+	                 s.status = 'relaying'
+	                 and s.tx_hash is null
+	                 and (s.lease_expires_at is null or s.lease_expires_at <= now())
+	               )
 	               or s.lease_expires_at <= now()
 	               or (s.status in ('queued', 'retry_wait') and s.lease_expires_at is null)
 	             )
