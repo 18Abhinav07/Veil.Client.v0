@@ -16,7 +16,9 @@ import {
   getSubmittedMarketEscrowConsolidation,
   getSubmittedMarketPayout,
   listMarketPayoutQueue,
+  markMarketEscrowConsolidationPrepared,
   markMarketEscrowConsolidationSubmitted,
+  markMarketPayoutPrepared,
   markMarketPayoutSubmitted,
   type ExecutableMarketPayoutRow,
   type MarketEscrowConsolidationPairRow,
@@ -110,6 +112,13 @@ function readLeafIndex(value: unknown, label: string) {
     if (Number.isSafeInteger(parsed)) return parsed;
   }
   throw new Error(`${label} must be a non-negative integer`);
+}
+
+function readRelayBody(value: unknown, label: string): RelayBody {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} is required`);
+  }
+  return value as RelayBody;
 }
 
 function readPositiveUnits(value: unknown, label: string) {
@@ -262,8 +271,8 @@ async function relayWithRetry(relayBody: RelayBody): Promise<{ txHash: string }>
     },
     {
       serviceName: "relayer /relay",
-      tries: 5,
-      delayMs: 2000,
+      tries: 18,
+      delayMs: 5000,
       isRetryableStatus: isTransientRelayLag,
     },
   );
@@ -426,6 +435,61 @@ async function finalizeSubmittedPayout(input: {
   });
 }
 
+async function submitPreparedPayout(input: {
+  db: ReturnType<typeof getPgPool>;
+  payout: ExecutableMarketPayoutRow;
+  adminEmail: string;
+}) {
+  const relayBody = readRelayBody(input.payout.relay_body, "prepared payout relay body");
+  const sourceEscrowNoteId = readString(
+    input.payout.source_escrow_note_id,
+    "prepared payout source escrow note id",
+  );
+  const payoutCommitmentHex = readString(
+    input.payout.payout_commitment_hex,
+    "prepared payout commitment",
+  );
+  const encryptedPayoutNoteCiphertext = readString(
+    input.payout.encrypted_note_ciphertext,
+    "prepared payout ciphertext",
+  );
+  const relayed = await relayWithRetry(relayBody);
+  const submitted = await markMarketPayoutSubmitted(input.db, {
+    marketId: input.payout.market_id,
+    payoutId: input.payout.id,
+    sourceEscrowNoteId,
+    payoutCommitmentHex,
+    encryptedPayoutNoteCiphertext,
+    changeCommitmentHex: trimString(input.payout.change_commitment_hex) || null,
+    encryptedChangeNoteCiphertext:
+      trimString(input.payout.encrypted_change_note_ciphertext) || null,
+    changeAmountUnits: trimString(input.payout.change_amount_units) || null,
+    txHash: relayed.txHash,
+  });
+  if (!submitted) {
+    return NextResponse.json(
+      {
+        error: "Prepared payout was relayed but could not be checkpointed",
+        txHash: relayed.txHash,
+      },
+      { status: 409 },
+    );
+  }
+
+  return finalizeSubmittedPayout({
+    db: input.db,
+    payout: {
+      ...input.payout,
+      ...submitted,
+      tx_hash: relayed.txHash,
+      source_escrow_note_id: sourceEscrowNoteId,
+      payout_commitment_hex: payoutCommitmentHex,
+      encrypted_note_ciphertext: encryptedPayoutNoteCiphertext,
+    },
+    adminEmail: input.adminEmail,
+  });
+}
+
 async function finalizeSubmittedConsolidation(input: {
   db: ReturnType<typeof getPgPool>;
   transfer: SubmittedMarketEscrowConsolidationRow;
@@ -533,6 +597,52 @@ async function finalizeSubmittedConsolidation(input: {
     consolidatedCount: 1,
     remainingCount,
     completed: remainingCount === 0,
+  });
+}
+
+async function submitPreparedConsolidation(input: {
+  db: ReturnType<typeof getPgPool>;
+  transfer: SubmittedMarketEscrowConsolidationRow;
+  adminEmail: string;
+}) {
+  const relayBody = readRelayBody(input.transfer.relay_body, "prepared consolidation relay body");
+  const relayed = await relayWithRetry(relayBody);
+  const submitted = await markMarketEscrowConsolidationSubmitted(input.db, {
+    marketId: input.transfer.market_id,
+    adminEmail: input.adminEmail,
+    sourceEscrowNoteIds: input.transfer.source_escrow_note_ids,
+    rollupCommitmentHex: readString(
+      input.transfer.output_commitment_hex,
+      "prepared consolidation commitment",
+    ),
+    encryptedRollupNoteCiphertext: readString(
+      input.transfer.output_encrypted_note_ciphertext,
+      "prepared consolidation ciphertext",
+    ),
+    rollupAmountUnits: readPositiveUnits(
+      input.transfer.output_amount_units,
+      "prepared consolidation amount",
+    ),
+    txHash: relayed.txHash,
+  });
+  if (!submitted) {
+    return NextResponse.json(
+      {
+        error: "Prepared consolidation was relayed but could not be checkpointed",
+        txHash: relayed.txHash,
+      },
+      { status: 409 },
+    );
+  }
+
+  return finalizeSubmittedConsolidation({
+    db: input.db,
+    transfer: {
+      ...input.transfer,
+      ...submitted,
+      tx_hash: relayed.txHash,
+    },
+    adminEmail: input.adminEmail,
   });
 }
 
@@ -645,6 +755,22 @@ async function executeEscrowConsolidationStep(input: {
     recipientNotePublicHex: input.keys.senderNotePublicHex,
     recipientX25519PublicHex: input.keys.senderEncryptionPublicHex,
   });
+  const prepared = await markMarketEscrowConsolidationPrepared(input.db, {
+    marketId: input.marketId,
+    adminEmail: input.adminEmail,
+    sourceEscrowNoteIds: [first.id, second.id],
+    rollupCommitmentHex: proof.recipientNoteCommitmentHex,
+    encryptedRollupNoteCiphertext,
+    rollupAmountUnits: proof.recipientAmountUnits,
+    relayBody: proof.relayBody as unknown as Record<string, unknown>,
+  });
+  if (!prepared) {
+    return NextResponse.json(
+      { error: "Consolidation transfer could not be prepared for retry-safe relay" },
+      { status: 409 },
+    );
+  }
+
   const relayed = await relayWithRetry(proof.relayBody);
   const submitted = await markMarketEscrowConsolidationSubmitted(input.db, {
     marketId: input.marketId,
@@ -732,6 +858,13 @@ export async function POST(
 
     const submittedPayout = await getSubmittedMarketPayout(db, { marketId, payoutIds });
     if (submittedPayout) {
+      if (!submittedPayout.tx_hash) {
+        return submitPreparedPayout({
+          db,
+          payout: submittedPayout,
+          adminEmail,
+        });
+      }
       return finalizeSubmittedPayout({
         db,
         payout: submittedPayout,
@@ -741,6 +874,13 @@ export async function POST(
 
     const submittedConsolidation = await getSubmittedMarketEscrowConsolidation(db, { marketId });
     if (submittedConsolidation) {
+      if (!submittedConsolidation.tx_hash) {
+        return submitPreparedConsolidation({
+          db,
+          transfer: submittedConsolidation,
+          adminEmail,
+        });
+      }
       return finalizeSubmittedConsolidation({
         db,
         transfer: submittedConsolidation,
@@ -820,6 +960,24 @@ export async function POST(
           recipientNotePublicHex: keys.senderNotePublicHex,
           recipientX25519PublicHex: keys.senderEncryptionPublicHex,
         });
+    const prepared = await markMarketPayoutPrepared(db, {
+      marketId,
+      payoutId: payout.id,
+      sourceEscrowNoteId: payout.source_escrow_note_id,
+      payoutCommitmentHex: proof.recipientNoteCommitmentHex,
+      encryptedPayoutNoteCiphertext,
+      changeCommitmentHex: encryptedChangeNoteCiphertext ? proof.senderChangeCommitmentHex : null,
+      encryptedChangeNoteCiphertext,
+      changeAmountUnits: encryptedChangeNoteCiphertext ? proof.senderChangeAmountUnits : null,
+      relayBody: proof.relayBody as unknown as Record<string, unknown>,
+    });
+    if (!prepared) {
+      return NextResponse.json(
+        { error: "Payout transfer could not be prepared for retry-safe relay" },
+        { status: 409 },
+      );
+    }
+
     const relayed = await relayWithRetry(proof.relayBody);
     const submitted = await markMarketPayoutSubmitted(db, {
       marketId,

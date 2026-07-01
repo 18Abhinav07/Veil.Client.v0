@@ -887,6 +887,11 @@ export default function PublicDashboard({
                       value={sendDestination}
                       onChange={(e) => setSendDestination(e.target.value)}
                       className="w-full h-12 px-4 rounded-xl border border-stone-200 bg-white text-sm font-mono focus:border-stone-900 focus:ring-2 focus:ring-stone-900/10 focus:outline-none placeholder:text-stone-400 transition-all"
+                      maxLength={256}
+                      autoCorrect="off"
+                      autoCapitalize="none"
+                      autoComplete="off"
+                      spellCheck={false}
                     />
                     {contactOptions.length > 0 && (
                       <div className="relative h-12 w-12 shrink-0">
@@ -925,10 +930,13 @@ export default function PublicDashboard({
                   <input
                     id="send-amt"
                     type="text"
+                    inputMode="decimal"
                     placeholder="0.00"
                     required
                     value={sendAmount}
                     onChange={(e) => setSendAmount(e.target.value)}
+                    maxLength={20}
+                    autoComplete="off"
                     className="w-full h-12 px-4 rounded-xl border border-stone-200 bg-white text-sm focus:border-stone-900 focus:ring-2 focus:ring-stone-900/10 focus:outline-none placeholder:text-stone-400 transition-all"
                   />
                 </div>

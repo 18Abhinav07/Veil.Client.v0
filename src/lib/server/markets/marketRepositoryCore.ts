@@ -96,6 +96,7 @@ export interface MarketBetRow {
   change_commitment_hex: string | null;
   change_amount_units: string | null;
   encrypted_change_note_ciphertext: string | null;
+  relay_body: Record<string, unknown> | null;
   tx_hash: string | null;
   confirmed_at: Date | null;
   created_at: Date;
@@ -128,6 +129,7 @@ export interface MarketPayoutRow {
   encrypted_change_note_ciphertext: string | null;
   change_amount_units: string | null;
   change_leaf_index: number | null;
+  relay_body: Record<string, unknown> | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -172,6 +174,7 @@ export interface MarketEscrowTransferRow {
   change_commitment_hex: string | null;
   change_amount_units: string | null;
   change_leaf_index: number | null;
+  relay_body: Record<string, unknown> | null;
   tx_hash: string | null;
   error: string | null;
   created_at: Date;
@@ -747,6 +750,7 @@ export async function markMarketBetSubmitted(db: QueryClient, input: {
      where user_id = $1
        and id = $2
        and status in ('pending', 'submitted')
+       and (status <> 'submitted' or tx_hash is null or tx_hash = $8)
      returning *`,
     [
       input.userId,
@@ -757,6 +761,45 @@ export async function markMarketBetSubmitted(db: QueryClient, input: {
       input.changeAmountUnits ?? "",
       input.encryptedChangeNoteCiphertext ?? "",
       input.txHash,
+    ],
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function markMarketBetPrepared(db: QueryClient, input: {
+  userId: string;
+  betId: string;
+  escrowCommitmentHex: string;
+  escrowEncryptedNoteCiphertext: string;
+  changeCommitmentHex?: string | null;
+  changeAmountUnits?: string | null;
+  encryptedChangeNoteCiphertext?: string | null;
+  relayBody: Record<string, unknown>;
+}) {
+  const result = await db.query<MarketBetRow>(
+    `update market_bets set
+       status = 'submitted',
+       escrow_commitment_hex = $3,
+       change_commitment_hex = nullif($4, ''),
+       escrow_encrypted_note_ciphertext = nullif($5, ''),
+       change_amount_units = nullif($6, '')::numeric,
+       encrypted_change_note_ciphertext = nullif($7, ''),
+       relay_body = $8::jsonb,
+       updated_at = now()
+     where user_id = $1
+       and id = $2
+       and status in ('pending', 'submitted')
+       and tx_hash is null
+     returning *`,
+    [
+      input.userId,
+      input.betId,
+      input.escrowCommitmentHex,
+      input.changeCommitmentHex ?? "",
+      input.escrowEncryptedNoteCiphertext,
+      input.changeAmountUnits ?? "",
+      input.encryptedChangeNoteCiphertext ?? "",
+      JSON.stringify(input.relayBody),
     ],
   );
   return result.rows[0] ?? null;
@@ -1078,6 +1121,88 @@ export async function getMarketEscrowConsolidationPair(db: QueryClient, input: {
   return result.rows.length === 2 ? result.rows : [];
 }
 
+export async function markMarketEscrowConsolidationPrepared(db: QueryClient, input: {
+  marketId: string;
+  adminEmail: string;
+  sourceEscrowNoteIds: string[];
+  rollupCommitmentHex: string;
+  encryptedRollupNoteCiphertext: string;
+  rollupAmountUnits: string;
+  relayBody: Record<string, unknown>;
+}) {
+  const sourceEscrowNoteIds = input.sourceEscrowNoteIds.filter((id) => normalizeText(id));
+  if (sourceEscrowNoteIds.length !== 2) {
+    throw new Error("exactly two source escrow notes are required for consolidation");
+  }
+  const rollupCommitmentHex = normalizeText(input.rollupCommitmentHex);
+  const encryptedRollupNoteCiphertext = normalizeText(input.encryptedRollupNoteCiphertext);
+  const rollupAmountUnits = normalizeText(input.rollupAmountUnits);
+  if (!rollupCommitmentHex) throw new Error("rollupCommitmentHex is required");
+  if (!encryptedRollupNoteCiphertext) throw new Error("encryptedRollupNoteCiphertext is required");
+  if (!rollupAmountUnits) throw new Error("rollupAmountUnits is required");
+  assertPositiveUnits(rollupAmountUnits, "rollupAmountUnits");
+
+  const prepared = await db.query<MarketEscrowTransferRow>(
+    `with source_notes as (
+       update market_escrow_notes set
+         status = 'spent',
+         updated_at = now()
+       where market_id = $1
+         and id = any($2::uuid[])
+         and status in ('escrowed', 'spent')
+         and (status = 'escrowed' or tx_hash is null)
+       returning *
+     ),
+     source_summary as (
+       select count(*) as source_count
+       from source_notes
+     ),
+     prepared_transfer as (
+       insert into market_escrow_transfers (
+         market_id, operation_type, status, source_escrow_note_ids,
+         output_commitment_hex, output_amount_units, output_encrypted_note_ciphertext,
+         relay_body
+       )
+       select
+         $1, 'consolidation', 'submitted', $2::uuid[],
+         $3, $4::numeric, $5, $6::jsonb
+       from source_summary
+       where source_summary.source_count = cardinality($2::uuid[])
+       returning *
+     )
+     select * from prepared_transfer`,
+    [
+      input.marketId,
+      sourceEscrowNoteIds,
+      rollupCommitmentHex,
+      rollupAmountUnits,
+      encryptedRollupNoteCiphertext,
+      JSON.stringify(input.relayBody),
+    ],
+  );
+
+  const transfer = prepared.rows[0] ?? null;
+  if (transfer) {
+    await db.query<MarketActivityEventRow>(
+      `insert into market_activity_events (
+         market_id, event_type, event_data
+       ) values ($1, 'market_escrow_consolidation_prepared', $2::jsonb)
+       returning *`,
+      [
+        input.marketId,
+        JSON.stringify({
+          adminEmail: input.adminEmail,
+          sourceEscrowNoteIds,
+          rollupCommitmentHex,
+          rollupAmountUnits,
+        }),
+      ],
+    );
+  }
+
+  return transfer;
+}
+
 export async function markMarketEscrowConsolidationSubmitted(db: QueryClient, input: {
   marketId: string;
   adminEmail: string;
@@ -1110,7 +1235,7 @@ export async function markMarketEscrowConsolidationSubmitted(db: QueryClient, in
        where market_id = $1
          and id = any($2::uuid[])
          and status in ('escrowed', 'spent')
-         and (status = 'escrowed' or tx_hash = $6)
+         and (status = 'escrowed' or tx_hash = $6 or tx_hash is null)
        returning *
      ),
      source_summary as (
@@ -1118,7 +1243,19 @@ export async function markMarketEscrowConsolidationSubmitted(db: QueryClient, in
          count(*) as source_count
        from source_notes
      ),
-     submitted_transfer as (
+     existing_transfer as (
+       update market_escrow_transfers set
+         tx_hash = $6,
+         error = null,
+         updated_at = now()
+       where market_id = $1
+         and operation_type = 'consolidation'
+         and status = 'submitted'
+         and tx_hash is null
+         and source_escrow_note_ids = $2::uuid[]
+       returning *
+     ),
+     inserted_transfer as (
        insert into market_escrow_transfers (
          market_id, operation_type, status, source_escrow_note_ids,
          output_commitment_hex, output_amount_units, output_encrypted_note_ciphertext, tx_hash
@@ -1128,9 +1265,12 @@ export async function markMarketEscrowConsolidationSubmitted(db: QueryClient, in
          $3, $4::numeric, $5, $6
        from source_summary
        where source_summary.source_count = cardinality($2::uuid[])
+         and not exists (select 1 from existing_transfer)
        returning *
      )
-     select * from submitted_transfer`,
+     select * from existing_transfer
+     union all
+     select * from inserted_transfer`,
     [
       input.marketId,
       sourceEscrowNoteIds,
@@ -1179,10 +1319,10 @@ export async function getSubmittedMarketEscrowConsolidation(db: QueryClient, inp
      where transfer.market_id = $1
        and transfer.operation_type = 'consolidation'
        and transfer.status = 'submitted'
-       and transfer.tx_hash is not null
        and transfer.output_commitment_hex is not null
        and transfer.output_amount_units is not null
        and transfer.output_encrypted_note_ciphertext is not null
+       and (transfer.tx_hash is not null or transfer.relay_body is not null)
        and pool.status = 'active'
        and pool.contract_id is not null
      order by transfer.updated_at asc
@@ -1693,10 +1833,10 @@ export async function getSubmittedMarketPayout(db: QueryClient, input: {
        and p.id = any($2::uuid[])
        and p.status = 'submitted'
        and p.source_escrow_note_id is not null
-       and p.tx_hash is not null
        and p.payout_commitment_hex is not null
        and p.encrypted_note_ciphertext is not null
        and source.status = 'spent'
+       and (p.tx_hash is not null or p.relay_body is not null)
        and pool.status = 'active'
        and pool.contract_id is not null
        and recipient_profile.bn254_public_hex is not null
@@ -1707,6 +1847,92 @@ export async function getSubmittedMarketPayout(db: QueryClient, input: {
   );
 
   return result.rows[0] ?? null;
+}
+
+export async function markMarketPayoutPrepared(db: QueryClient, input: {
+  marketId: string;
+  payoutId: string;
+  sourceEscrowNoteId: string;
+  payoutCommitmentHex: string;
+  encryptedPayoutNoteCiphertext: string;
+  changeCommitmentHex?: string | null;
+  encryptedChangeNoteCiphertext?: string | null;
+  changeAmountUnits?: string | null;
+  relayBody: Record<string, unknown>;
+}) {
+  const payoutCommitmentHex = normalizeText(input.payoutCommitmentHex);
+  const encryptedPayoutNoteCiphertext = normalizeText(input.encryptedPayoutNoteCiphertext);
+  const changeCommitmentHex = normalizeText(input.changeCommitmentHex);
+  const encryptedChangeNoteCiphertext = normalizeText(input.encryptedChangeNoteCiphertext);
+  const changeAmountUnits = normalizeText(input.changeAmountUnits);
+  if (!payoutCommitmentHex) throw new Error("payoutCommitmentHex is required");
+  if (!encryptedPayoutNoteCiphertext) throw new Error("encryptedPayoutNoteCiphertext is required");
+  if (changeAmountUnits) assertPositiveUnits(changeAmountUnits, "changeAmountUnits");
+
+  const result = await db.query<MarketPayoutRow>(
+    `with source_note as (
+       update market_escrow_notes set
+         status = 'spent',
+         updated_at = now()
+       where id = $3::uuid
+         and market_id = $1
+         and status in ('escrowed', 'spent')
+         and (status = 'escrowed' or tx_hash is null)
+       returning *
+     ),
+     prepared_payout as (
+       update market_payouts p set
+         status = 'submitted',
+         source_escrow_note_id = $3,
+         payout_commitment_hex = $4,
+         encrypted_note_ciphertext = $5,
+         change_commitment_hex = $6,
+         encrypted_change_note_ciphertext = $7,
+         change_amount_units = $8::numeric,
+         change_leaf_index = null,
+         relay_body = $9::jsonb,
+         updated_at = now()
+       where p.id = $2::uuid
+         and p.market_id = $1
+         and p.status in ('pending', 'failed', 'submitted')
+         and p.tx_hash is null
+         and exists (select 1 from source_note)
+       returning p.*
+     )
+     select * from prepared_payout`,
+    [
+      input.marketId,
+      input.payoutId,
+      input.sourceEscrowNoteId,
+      payoutCommitmentHex,
+      encryptedPayoutNoteCiphertext,
+      changeCommitmentHex,
+      encryptedChangeNoteCiphertext,
+      changeAmountUnits,
+      JSON.stringify(input.relayBody),
+    ],
+  );
+
+  const payout = result.rows[0] ?? null;
+  if (payout) {
+    await db.query<MarketActivityEventRow>(
+      `insert into market_activity_events (
+         market_id, payout_id, event_type, event_data
+       ) values ($1, $2::uuid, 'market_payout_prepared', $3::jsonb)
+       returning *`,
+      [
+        input.marketId,
+        input.payoutId,
+        JSON.stringify({
+          sourceEscrowNoteId: input.sourceEscrowNoteId,
+          payoutCommitmentHex,
+          changeCommitmentHex,
+        }),
+      ],
+    );
+  }
+
+  return payout;
 }
 
 export async function markMarketPayoutSubmitted(db: QueryClient, input: {
@@ -1739,7 +1965,8 @@ export async function markMarketPayoutSubmitted(db: QueryClient, input: {
          updated_at = now()
        where id = $3::uuid
          and market_id = $1
-         and status = 'escrowed'
+         and status in ('escrowed', 'spent')
+         and (status = 'escrowed' or tx_hash = $6 or tx_hash is null)
        returning *
      ),
      submitted_payout as (
@@ -1753,10 +1980,12 @@ export async function markMarketPayoutSubmitted(db: QueryClient, input: {
          encrypted_change_note_ciphertext = $8,
          change_amount_units = $9::numeric,
          change_leaf_index = null,
+         relay_body = coalesce(relay_body, $10::jsonb),
          updated_at = now()
        where p.id = $2::uuid
          and p.market_id = $1
-         and p.status in ('pending', 'failed')
+         and p.status in ('pending', 'failed', 'submitted')
+         and (p.status <> 'submitted' or p.tx_hash is null or p.tx_hash = $6)
          and exists (select 1 from source_note)
        returning p.*
      )
@@ -1771,6 +2000,7 @@ export async function markMarketPayoutSubmitted(db: QueryClient, input: {
       changeCommitmentHex,
       encryptedChangeNoteCiphertext,
       changeAmountUnits,
+      null,
     ],
   );
 

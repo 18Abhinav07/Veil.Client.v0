@@ -100,6 +100,7 @@ test("market bet API proves submits finalizes and stores escrow transfers agains
   assert.match(betSource, /RELAYER_URL/);
   assert.match(betSource, /\/relay/);
   assert.match(betSource, /markMarketBetSubmitted/);
+  assert.match(betSource, /markMarketBetPrepared/);
   assert.match(betSource, /getSubmittedMarketBetRecovery/);
   assert.match(betSource, /resolveBetRecoveryPayload/);
   assert.match(betSource, /cancelPendingMarketBet/);
@@ -113,6 +114,14 @@ test("market bet API proves submits finalizes and stores escrow transfers agains
   assert.match(betSource, /status: 202/);
   assert.match(betSource, /escrow:\s*\{\s*status: "submitted"/);
   assert.match(betSource, /poolId: marketPool\.contractId/);
+  const submitBetSource = betSource.slice(
+    betSource.indexOf("async function submitBet"),
+    betSource.indexOf("async function finalizeBet"),
+  );
+  assert.match(submitBetSource, /async function submitBet/);
+  assert.match(submitBetSource, /markMarketBetPrepared/);
+  assert.doesNotMatch(submitBetSource, /cancelPreparedBet/);
+  assert.doesNotMatch(betSource, /retryFetchErrors:\s*false/);
   assert.doesNotMatch(betSource, /payload\.poolId/);
   assert.doesNotMatch(betSource, /MARKET_ESCROW_.*PRIVATE/);
 });
@@ -172,6 +181,8 @@ test("market admin APIs are restricted and can seed and resolve markets", () => 
   assert.match(payoutSource, /inputNotes/);
   assert.match(payoutSource, /consolidatedCount/);
   assert.match(payoutSource, /remainingCount/);
+  assert.match(payoutSource, /tries:\s*18/);
+  assert.match(payoutSource, /delayMs:\s*5000/);
   assert.match(payoutSource, /status: "submitted"/);
   assert.match(payoutSource, /finalizeSubmittedPayout/);
   assert.doesNotMatch(payoutSource, /executeMarketPayoutBatch/);

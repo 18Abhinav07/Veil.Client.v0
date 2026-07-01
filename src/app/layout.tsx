@@ -1,10 +1,18 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Private Payments Wallet",
-  description: "Encrypted privacy wallet on Stellar testnet",
+  title: "Veil — Private Payments Wallet",
+  description: "Privacy-preserving USDC payments on Stellar. Shield, transfer, and manage USDC with ZK-proof privacy.",
 };
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+};
+
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

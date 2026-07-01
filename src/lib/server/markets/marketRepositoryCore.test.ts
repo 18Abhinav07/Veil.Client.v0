@@ -24,8 +24,11 @@ import {
   listMarketPayoutQueue,
   listMarkets,
   markMarketEscrowConsolidationSubmitted,
+  markMarketEscrowConsolidationPrepared,
   listUserMarketPortfolio,
   markMarketBetSubmitted,
+  markMarketBetPrepared,
+  markMarketPayoutPrepared,
   markMarketPayoutSubmitted,
   openPredictionMarketDraft,
   recordMarketActivity,
@@ -332,6 +335,15 @@ test("market escrow consolidation selects two smallest spendable notes and recor
   await getSubmittedMarketEscrowConsolidation(db, {
     marketId: "market-1",
   });
+  await markMarketEscrowConsolidationPrepared(db, {
+    marketId: "market-1",
+    adminEmail: "abhinavpangaria2003@gmail.com",
+    sourceEscrowNoteIds: ["escrow-small-1", "escrow-small-2"],
+    rollupCommitmentHex: "prepared-rollup-commitment",
+    encryptedRollupNoteCiphertext: "{\"encryptedOutputKind\":\"spp-x25519-output-note\"}",
+    rollupAmountUnits: "322608696",
+    relayBody: { poolId: "market-pool", public: { inputNullifiers: ["1", "2"] } },
+  });
   await confirmSubmittedMarketEscrowConsolidationTransfer(db, {
     marketId: "market-1",
     adminEmail: "abhinavpangaria2003@gmail.com",
@@ -356,6 +368,7 @@ test("market escrow consolidation selects two smallest spendable notes and recor
   assert.match(combinedSql, /'rollup'/i);
   assert.match(combinedSql, /insert into market_escrow_transfers/i);
   assert.match(combinedSql, /output_encrypted_note_ciphertext/i);
+  assert.match(combinedSql, /relay_body/i);
   assert.match(combinedSql, /status = 'submitted'/i);
   assert.match(combinedSql, /market_escrow_consolidation_submitted/i);
   assert.match(combinedSql, /market_escrow_consolidated/i);
@@ -375,6 +388,17 @@ test("market admin payout submission checkpoints relayed outputs for finalize re
     changeAmountUnits: "25",
     txHash: "tx-payout",
   });
+  await markMarketPayoutPrepared(db, {
+    marketId: "market-1",
+    payoutId: "payout-1",
+    sourceEscrowNoteId: "escrow-note-1",
+    payoutCommitmentHex: "prepared-payout-commitment",
+    encryptedPayoutNoteCiphertext: "{\"encryptedOutputKind\":\"spp-x25519-output-note\"}",
+    changeCommitmentHex: "prepared-escrow-change",
+    encryptedChangeNoteCiphertext: "{\"encryptedOutputKind\":\"spp-x25519-output-note\",\"outputIndex\":1}",
+    changeAmountUnits: "25",
+    relayBody: { poolId: "market-pool", public: { inputNullifiers: ["1", "2"] } },
+  });
   await getSubmittedMarketPayout(db, {
     marketId: "market-1",
     payoutIds: ["payout-1"],
@@ -389,10 +413,10 @@ test("market admin payout submission checkpoints relayed outputs for finalize re
   assert.match(combinedSql, /change_commitment_hex = \$7/i);
   assert.match(combinedSql, /encrypted_change_note_ciphertext = \$8/i);
   assert.match(combinedSql, /change_amount_units = \$9::numeric/i);
+  assert.match(combinedSql, /relay_body/i);
   assert.match(combinedSql, /market_payout_submitted/i);
   assert.match(combinedSql, /p\.status = 'submitted'/i);
   assert.match(combinedSql, /p\.source_escrow_note_id is not null/i);
-  assert.match(combinedSql, /p\.tx_hash is not null/i);
   assert.match(combinedSql, /source\.status = 'spent'/i);
 });
 
@@ -496,6 +520,16 @@ test("market bet confirmation creates an escrow note and only consumes a locked 
 test("market bet submission checkpoints tx hash before escrow indexing can lag", async () => {
   const db = new RecordingDb();
 
+  await markMarketBetPrepared(db, {
+    userId: "user-1",
+    betId: "bet-1",
+    escrowCommitmentHex: "escrow-commitment",
+    escrowEncryptedNoteCiphertext: "{\"encryptedOutputKind\":\"spp-x25519-output-note\"}",
+    changeCommitmentHex: "change-commitment",
+    changeAmountUnits: "25",
+    encryptedChangeNoteCiphertext: "{\"version\":1}",
+    relayBody: { poolId: "market-pool", public: { inputNullifiers: ["1", "2"] } },
+  });
   await markMarketBetSubmitted(db, {
     userId: "user-1",
     betId: "bet-1",
@@ -507,12 +541,13 @@ test("market bet submission checkpoints tx hash before escrow indexing can lag",
     txHash: "tx-bet",
   });
 
-  const submitSql = db.queries.at(-1)?.text ?? "";
+  const submitSql = db.queries.map((query) => query.text).join("\n");
   assert.match(submitSql, /update market_bets set/i);
   assert.match(submitSql, /status = 'submitted'/i);
   assert.match(submitSql, /escrow_encrypted_note_ciphertext = nullif\(\$5, ''\)/i);
   assert.match(submitSql, /encrypted_change_note_ciphertext = nullif\(\$7, ''\)/i);
   assert.match(submitSql, /change_amount_units = nullif\(\$6, ''\)::numeric/i);
+  assert.match(submitSql, /relay_body = \$8::jsonb/i);
   assert.match(submitSql, /tx_hash = \$8/i);
   assert.match(submitSql, /status in \('pending', 'submitted'\)/i);
 });

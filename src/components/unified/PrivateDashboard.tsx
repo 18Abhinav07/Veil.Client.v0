@@ -1342,9 +1342,13 @@ export default function PrivateDashboard({
                   <div className="mt-3 flex items-center justify-between gap-4">
                     <input 
                       type="text" 
+                      inputMode="decimal"
                       placeholder="0"
+                      aria-label="Deposit amount in USDC"
                       value={depositAmount}
                       onChange={(e) => setDepositAmount(e.target.value)}
+                      maxLength={20}
+                      autoComplete="off"
                       className="bg-transparent text-3xl font-semibold outline-none text-stone-900 placeholder:text-stone-300 w-full font-mono mt-1"
                     />
                     <div className="flex items-center gap-1.5 rounded-lg bg-stone-100 px-3 py-1 font-semibold text-xs text-stone-800 shrink-0">
@@ -1550,6 +1554,11 @@ export default function PrivateDashboard({
                                 value={item.address}
                                 onChange={(e) => updateRecipientField(item.id, "address", e.target.value)}
                                 className="w-full h-12 px-4 rounded-xl border border-stone-200 bg-white text-sm font-mono focus:border-stone-900 focus:ring-2 focus:ring-stone-900/10 focus:outline-none placeholder:text-stone-400 transition-all"
+                                maxLength={256}
+                                autoCorrect="off"
+                                autoCapitalize="none"
+                                autoComplete="off"
+                                spellCheck={false}
                               />
                                {contactOptions.length > 0 && (
                                 <div className="relative h-12 w-12 shrink-0">
@@ -1590,10 +1599,14 @@ export default function PrivateDashboard({
                           <div className="flex gap-2 items-center">
                             <input 
                               type="text" 
+                              inputMode="decimal"
                               placeholder="Amount"
+                              aria-label="Send amount in USDC"
                               value={item.amount}
                               onChange={(e) => updateRecipientField(item.id, "amount", e.target.value)}
                               className="w-full h-12 px-4 rounded-xl border border-stone-200 bg-white text-sm focus:border-stone-900 focus:ring-2 focus:ring-stone-900/10 focus:outline-none placeholder:text-stone-400 transition-all"
+                              maxLength={20}
+                              autoComplete="off"
                             />
                             <span className="text-[10px] font-bold text-stone-400 px-2">USDC</span>
                           </div>

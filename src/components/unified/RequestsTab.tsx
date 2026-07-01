@@ -648,15 +648,41 @@ export default function RequestsTab({ wallet, initialContacts, initialRequests }
                 </label>
                 <label className="block">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-stone-400 font-sans">Amount (USDC)</span>
-                  <input className="mt-2 h-11 w-full border-b border-stone-200 bg-transparent px-1 text-sm outline-none focus:border-stone-950 transition-colors" onChange={(event) => setAmount(event.target.value)} value={amount} />
+                  <input
+                    id="request-amount"
+                    aria-label="Request amount in USDC"
+                    className="mt-2 h-11 w-full border-b border-stone-200 bg-transparent px-1 text-sm outline-none focus:border-stone-950 transition-colors"
+                    onChange={(event) => setAmount(event.target.value)}
+                    value={amount}
+                    inputMode="decimal"
+                    autoComplete="off"
+                    placeholder="0.00"
+                    maxLength={20}
+                  />
                 </label>
                 <label className="block">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-stone-400 font-sans">Title</span>
-                  <input className="mt-2 h-11 w-full border-b border-stone-200 bg-transparent px-1 text-sm outline-none focus:border-stone-950 transition-colors" onChange={(event) => setTitle(event.target.value)} placeholder="Invoice, dinner, payout..." value={title} />
+                  <input
+                    id="request-title"
+                    aria-label="Request title"
+                    className="mt-2 h-11 w-full border-b border-stone-200 bg-transparent px-1 text-sm outline-none focus:border-stone-950 transition-colors"
+                    onChange={(event) => setTitle(event.target.value)}
+                    placeholder="Invoice, dinner, payout..."
+                    value={title}
+                    maxLength={100}
+                  />
                 </label>
                 <label className="block">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-stone-400 font-sans">Details</span>
-                  <textarea className="mt-2 min-h-24 w-full resize-none border-b border-stone-200 bg-transparent p-1 text-sm outline-none focus:border-stone-950 transition-colors" onChange={(event) => setDetails(event.target.value)} placeholder="Encrypted details (optional)" value={details} />
+                  <textarea
+                    id="request-details"
+                    aria-label="Request details (optional)"
+                    className="mt-2 min-h-24 w-full resize-none border-b border-stone-200 bg-transparent p-1 text-sm outline-none focus:border-stone-950 transition-colors"
+                    onChange={(event) => setDetails(event.target.value)}
+                    placeholder="Encrypted details (optional)"
+                    value={details}
+                    maxLength={500}
+                  />
                 </label>
                 <button className={`${primaryButton} mt-2`} disabled={busy}>
                   {sendingRequest ? (

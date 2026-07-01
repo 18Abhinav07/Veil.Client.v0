@@ -355,7 +355,7 @@ export default function ContactsTab({ initialContacts }: { initialContacts?: Con
           <div className="flex-1 min-h-0 animate-in fade-in duration-300">
             <form onSubmit={addContact} className="p-1 space-y-6">
               <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-stone-400 font-sans">
+                <label htmlFor="contact-query" className="text-[10px] font-bold uppercase tracking-wider text-stone-400 font-sans">
                   Add contact
                 </label>
                 <p className="text-xs text-stone-500 mt-1 leading-relaxed">
@@ -366,10 +366,16 @@ export default function ContactsTab({ initialContacts }: { initialContacts?: Con
                 <div className="relative">
                   <Search className="pointer-events-none absolute left-0 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
                   <input
+                    id="contact-query"
+                    aria-label="Contact email, handle, or Stellar address"
                     className="h-11 w-full border-b border-stone-200 bg-transparent pl-7 pr-3 text-sm outline-none focus:border-stone-950 transition-colors"
                     onChange={(event) => setQuery(event.target.value)}
                     placeholder="Email, @user id, or Stellar address"
                     value={query}
+                    maxLength={256}
+                    autoComplete="off"
+                    autoCorrect="off"
+                    spellCheck={false}
                   />
                 </div>
                 <button className={`${primaryButton} self-start mt-2`} disabled={busy}>

@@ -18,6 +18,7 @@ import {
   createMarketBetIntent,
   getMarketBySlug,
   getSubmittedMarketBetRecovery,
+  markMarketBetPrepared,
   markMarketBetSubmitted,
   recordMarketActivity,
   type MarketBetRow,
@@ -196,7 +197,6 @@ async function relayWithRetry(relayBody: RelayBody): Promise<{ txHash: string }>
       serviceName: "relayer /relay",
       tries: 18,
       delayMs: 5000,
-      retryFetchErrors: false,
       isRetryableStatus: isTransientRelayLag,
     },
   );
@@ -550,13 +550,24 @@ async function submitBet(input: {
     input.payload.encryptedChangeNoteCiphertext,
   );
 
-  let relayed: { txHash: string };
-  try {
-    relayed = await relayWithRetry(relayBody);
-  } catch (error) {
-    await cancelPreparedBet(db, { userId: input.userId, betId });
-    throw error;
+  const prepared = await markMarketBetPrepared(db, {
+    userId: input.userId,
+    betId,
+    escrowCommitmentHex,
+    escrowEncryptedNoteCiphertext,
+    changeCommitmentHex,
+    changeAmountUnits,
+    encryptedChangeNoteCiphertext,
+    relayBody: relayBody as unknown as Record<string, unknown>,
+  });
+  if (!prepared) {
+    return NextResponse.json(
+      { error: "Bet submission is not available for retry-safe relay" },
+      { status: 409 },
+    );
   }
+
+  const relayed = await relayWithRetry(relayBody);
   const submitted = await markMarketBetSubmitted(db, {
     userId: input.userId,
     betId,
