@@ -25,6 +25,8 @@ test("readiness route checks env and database without exposing secrets", () => {
   assert.match(source, /MARKET_ESCROW_X25519_PRIVATE_HEX/);
   assert.match(source, /MARKET_ESCROW_MEMBERSHIP_BLINDING_HEX/);
   assert.match(source, /select 1 as ok/i);
+  assert.match(source, /PROVER_API_URL[\s\S]*\/health/);
+  assert.match(source, /RELAYER_URL[\s\S]*\/health/);
   assert.match(source, /NextResponse\.json/);
   assert.doesNotMatch(source, /AUTH_GOOGLE_SECRET.*value/);
   assert.doesNotMatch(source, /DATABASE_URL.*value/);

@@ -33,6 +33,25 @@ function envStatus(env: Record<string, string | undefined>) {
   }));
 }
 
+async function serviceHealth(name: string, baseUrl: string | undefined) {
+  if (!baseUrl) return { ok: false, error: `${name} URL is missing` };
+  try {
+    const response = await fetch(`${baseUrl.replace(/\/$/, "")}/health`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(8000),
+    });
+    return {
+      ok: response.ok,
+      error: response.ok ? null : `${name} health returned HTTP ${response.status}`,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : `${name} health failed`,
+    };
+  }
+}
+
 export async function GET() {
   const env = getWalletServerEnv();
   const envChecks = envStatus(env);
@@ -47,7 +66,12 @@ export async function GET() {
     databaseError = error instanceof Error ? error.message : "Database readiness failed";
   }
 
-  const ok = missingEnv.length === 0 && databaseOk;
+  const [prover, relayer] = await Promise.all([
+    serviceHealth("prover", env.PROVER_API_URL),
+    serviceHealth("relayer", env.RELAYER_URL),
+  ]);
+
+  const ok = missingEnv.length === 0 && databaseOk && prover.ok && relayer.ok;
   return NextResponse.json(
     {
       ok,
@@ -56,6 +80,10 @@ export async function GET() {
         database: {
           ok: databaseOk,
           error: databaseOk ? null : databaseError,
+        },
+        services: {
+          prover,
+          relayer,
         },
       },
     },
