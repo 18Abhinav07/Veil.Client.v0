@@ -36,3 +36,14 @@ test("private dashboard excludes active spend-job notes from new spend selection
   assert.match(source, /activeJobId: jobId/);
   assert.match(source, /status: "pending_spend"/);
 });
+
+test("private dashboard cannot keep a stale locked note selected for sending", () => {
+  const source = readFileSync(
+    join(root, "src", "components", "unified", "PrivateDashboard.tsx"),
+    "utf8",
+  );
+
+  assert.match(source, /const selectedNote = useMemo/);
+  assert.match(source, /liveNotes\.find\(\(item\) => item\.note\.commitmentHex === selectedCommitment\)/);
+  assert.doesNotMatch(source, /notes\.find\(\(item\) => item\.note\.commitmentHex === selectedCommitment\)/);
+});

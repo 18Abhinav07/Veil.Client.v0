@@ -1709,11 +1709,12 @@ export async function getNextBackgroundSpendJobCandidate(
        and j.execution_package_deleted_at is null
        and j.execution_package_expires_at is not null
        and j.status in ('queued', 'running', 'waiting_retry', 'paused_needs_unlock')
-	       and s.status in ('queued', 'retry_wait', 'proof_ready', 'proving')
+       and s.status in ('queued', 'retry_wait', 'proof_ready', 'proving', 'relaying')
 	       and s.tx_hash is null
 	       and (s.retry_after is null or s.retry_after <= now())
 	       and (
 	         s.status = 'proof_ready'
+	         or (s.status = 'relaying' and s.tx_hash is null and s.lease_expires_at <= now())
 	         or s.lease_expires_at <= now()
 	         or (s.status in ('queued', 'retry_wait') and s.lease_expires_at is null)
 	       )
@@ -1848,7 +1849,7 @@ export async function claimNextRunnableSpendJobStep(
 	             and j.active_commitment_hex = $3
 	             and j.active_amount_units = $4
 	             and j.active_leaf_index is not distinct from $5
-	             and s.status in ('queued', 'retry_wait', 'proof_ready', 'proving')
+	             and s.status in ('queued', 'retry_wait', 'proof_ready', 'proving', 'relaying')
 	             and s.tx_hash is null
 	             and s.source_commitment_hex = $3
 	             and s.source_amount_units = $4
@@ -1856,6 +1857,7 @@ export async function claimNextRunnableSpendJobStep(
              and (s.retry_after is null or s.retry_after <= now())
 	             and (
 	               s.status = 'proof_ready'
+	               or (s.status = 'relaying' and s.tx_hash is null and s.lease_expires_at <= now())
 	               or s.lease_expires_at <= now()
 	               or (s.status in ('queued', 'retry_wait') and s.lease_expires_at is null)
 	             )
@@ -2145,7 +2147,7 @@ export async function markSpendJobRetryableFailure(
          error_message = $5,
          retry_after = case
            when attempts >= $7 then null
-           else $6
+           else $6::timestamptz
          end,
          lease_owner = null,
          lease_expires_at = null,
@@ -2182,7 +2184,7 @@ export async function markSpendJobRetryableFailure(
          error_message = $4,
          retry_after = case
            when failed_step.status = 'failed_final' then null
-           else $5
+           else $5::timestamptz
          end,
          reconcile_after = case
            when failed_step.status = 'failed_final' then now()

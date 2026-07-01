@@ -324,7 +324,7 @@ test("spend job step claim is sequential and bound to the active source note", a
   assert.match(sql, /previous\.status <> 'confirmed'/i);
   assert.match(sql, /j\.active_commitment_hex = \$3/i);
   assert.match(sql, /s\.source_commitment_hex = \$3/i);
-  assert.match(sql, /status in \('queued', 'retry_wait', 'proof_ready', 'proving'\)/i);
+  assert.match(sql, /status in \('queued', 'retry_wait', 'proof_ready', 'proving', 'relaying'\)/i);
   assert.match(sql, /s\.tx_hash is null/i);
   assert.match(sql, /relay_body = null/i);
   assert.match(sql, /commit/i);
@@ -345,6 +345,7 @@ test("spend job step claim writes a durable lease for the runner", async () => {
 
   const sql = db.combinedSql();
   assert.match(sql, /s\.status = 'proof_ready'/i);
+  assert.match(sql, /s\.status = 'relaying' and s\.tx_hash is null and s\.lease_expires_at <= now\(\)/i);
   assert.match(sql, /s\.lease_expires_at <= now\(\)/i);
   assert.match(sql, /s\.status in \('queued', 'retry_wait'\) and s\.lease_expires_at is null/i);
   assert.match(sql, /lease_owner = \$6/i);
@@ -406,9 +407,10 @@ test("background worker can select active packages and reclaim expired proving s
   assert.match(sql, /execution_package_deleted_at is null/i);
   assert.match(sql, /execution_package_expires_at is not null/i);
   assert.doesNotMatch(sql, /execution_package_expires_at > now\(\)/i);
-  assert.match(sql, /s\.status in \('queued', 'retry_wait', 'proof_ready', 'proving'\)/i);
+  assert.match(sql, /s\.status in \('queued', 'retry_wait', 'proof_ready', 'proving', 'relaying'\)/i);
   assert.match(sql, /s\.tx_hash is null/i);
   assert.match(sql, /s\.status = 'proof_ready'/i);
+  assert.match(sql, /s\.status = 'relaying' and s\.tx_hash is null and s\.lease_expires_at <= now\(\)/i);
   assert.match(sql, /s\.lease_expires_at <= now\(\)/i);
   assert.match(sql, /s\.status in \('queued', 'retry_wait'\) and s\.lease_expires_at is null/i);
   assert.match(sql, /order by j\.created_at asc, s\.ordinal asc/i);
@@ -458,6 +460,8 @@ test("retryable failures become recoverable after bounded automatic retries", as
   const sql = db.combinedSql();
   assert.match(sql, /case\s+when attempts >= \$7 then 'failed_final'\s+else 'retry_wait'\s+end/i);
   assert.match(sql, /case\s+when failed_step\.status = 'failed_final' then 'failed_recoverable'\s+else 'waiting_retry'\s+end/i);
+  assert.match(sql, /else \$6::timestamptz/i);
+  assert.match(sql, /else \$5::timestamptz/i);
   assert.match(sql, /reconcile_after = case/i);
   assert.ok(
     db.queries.some((query) => query.values?.includes("spend_job_retry_wait")),

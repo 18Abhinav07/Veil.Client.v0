@@ -366,8 +366,8 @@ export default function PrivateDashboard({
   const spentNotes = useMemo(() => notes.filter((item) => !isNoteSpendable(item)), [notes]);
 
   const selectedNote = useMemo(() => {
-    return notes.find((item) => item.note.commitmentHex === selectedCommitment) ?? liveNotes[0] ?? null;
-  }, [notes, selectedCommitment, liveNotes]);
+    return liveNotes.find((item) => item.note.commitmentHex === selectedCommitment) ?? liveNotes[0] ?? null;
+  }, [selectedCommitment, liveNotes]);
 
   const privateBalanceUnits = useMemo(
     () => liveNotes.reduce((total, item) => total + BigInt(item.note.amountUnits), BigInt(0)).toString(),
