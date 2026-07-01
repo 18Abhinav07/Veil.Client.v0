@@ -40,7 +40,8 @@ function randomSessionToken() {
 }
 
 function sessionCookie(token) {
-  return `next-auth.session-token=${encodeURIComponent(token)}`;
+  const encoded = encodeURIComponent(token);
+  return `next-auth.session-token=${encoded}; __Secure-next-auth.session-token=${encoded}`;
 }
 
 async function createSmokeSession(client, { email, name }) {

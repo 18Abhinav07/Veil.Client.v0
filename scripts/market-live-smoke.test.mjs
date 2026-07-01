@@ -28,6 +28,7 @@ test("market auto smoke runner creates transient Auth.js sessions without writin
   assert.match(liveSource, /export async function main/);
   assert.doesNotMatch(liveSource, /executedCount === 1/);
   assert.match(source, /next-auth\.session-token/);
+  assert.match(source, /__Secure-next-auth\.session-token/);
   assert.match(source, /insert into users/i);
   assert.match(source, /insert into sessions/i);
   assert.match(source, /insert into wallet_profiles/i);

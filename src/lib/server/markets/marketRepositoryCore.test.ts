@@ -298,6 +298,7 @@ test("market admin payout execution selects escrow source notes and records payo
   assert.match(combinedSql, /recipient_profile\.x25519_public_hex is not null/i);
   assert.match(combinedSql, /update market_escrow_notes/i);
   assert.match(combinedSql, /status = 'spent'/i);
+  assert.match(combinedSql, /submitted_payout\.tx_hash = \$7/i);
   assert.match(combinedSql, /insert into market_escrow_notes/i);
   assert.match(combinedSql, /encrypted_note_ciphertext/i);
   assert.match(combinedSql, /update market_payouts/i);
@@ -363,6 +364,9 @@ test("market escrow consolidation selects two smallest spendable notes and recor
   assert.match(combinedSql, /limit 2/i);
   assert.match(combinedSql, /update market_escrow_notes/i);
   assert.match(combinedSql, /id = any\(\$2::uuid\[\]\)/i);
+  assert.match(combinedSql, /prepared_transfer\.relay_body is not null/i);
+  assert.match(combinedSql, /submitted_transfer\.tx_hash = \$7/i);
+  assert.match(combinedSql, /from source_notes e/i);
   assert.match(combinedSql, /insert into market_escrow_notes/i);
   assert.match(combinedSql, /null, .*'POOL'/i);
   assert.match(combinedSql, /'rollup'/i);
@@ -414,6 +418,7 @@ test("market admin payout submission checkpoints relayed outputs for finalize re
   assert.match(combinedSql, /encrypted_change_note_ciphertext = \$8/i);
   assert.match(combinedSql, /change_amount_units = \$9::numeric/i);
   assert.match(combinedSql, /relay_body/i);
+  assert.match(combinedSql, /prepared_payout\.relay_body is not null/i);
   assert.match(combinedSql, /market_payout_submitted/i);
   assert.match(combinedSql, /p\.status = 'submitted'/i);
   assert.match(combinedSql, /p\.source_escrow_note_id is not null/i);

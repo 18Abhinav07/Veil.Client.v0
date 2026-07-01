@@ -1235,7 +1235,24 @@ export async function markMarketEscrowConsolidationSubmitted(db: QueryClient, in
        where market_id = $1
          and id = any($2::uuid[])
          and status in ('escrowed', 'spent')
-         and (status = 'escrowed' or tx_hash = $6 or tx_hash is null)
+        and (
+          status = 'escrowed'
+          or tx_hash = $6
+          or tx_hash is null
+          or exists (
+            select 1
+            from market_escrow_transfers prepared_transfer
+            where prepared_transfer.market_id = $1
+              and prepared_transfer.operation_type = 'consolidation'
+              and prepared_transfer.status = 'submitted'
+              and prepared_transfer.tx_hash is null
+              and prepared_transfer.source_escrow_note_ids = $2::uuid[]
+              and prepared_transfer.output_commitment_hex = $3
+              and prepared_transfer.output_amount_units = $4::numeric
+              and prepared_transfer.output_encrypted_note_ciphertext = $5
+              and prepared_transfer.relay_body is not null
+          )
+        )
        returning *
      ),
      source_summary as (
@@ -1377,15 +1394,28 @@ export async function confirmSubmittedMarketEscrowConsolidationTransfer(db: Quer
          and tx_hash = $7
        returning *
      ),
+     source_notes as (
+       update market_escrow_notes e set
+         status = 'spent',
+         tx_hash = $7,
+         updated_at = now()
+       from transfer_row transfer
+       where e.market_id = $1
+         and e.id = any(transfer.source_escrow_note_ids)
+         and e.status in ('escrowed', 'spent')
+         and (
+           e.status = 'escrowed'
+           or e.tx_hash = $7
+           or e.tx_hash is null
+           or transfer.tx_hash = $7
+         )
+       returning e.*
+     ),
      source_summary as (
        select
          count(*) as source_count,
          min(e.pool_id) as pool_id
-       from market_escrow_notes e
-       join transfer_row transfer on e.id = any(transfer.source_escrow_note_ids)
-       where e.market_id = $1
-         and e.status = 'spent'
-         and e.tx_hash = $7
+       from source_notes e
      ),
      inserted_rollup as (
        insert into market_escrow_notes (
@@ -1490,7 +1520,19 @@ export async function executeMarketEscrowConsolidationTransfer(db: QueryClient, 
        where market_id = $1
          and id = any($2::uuid[])
          and status in ('escrowed', 'spent')
-         and (status = 'escrowed' or tx_hash = $7)
+        and (
+          status = 'escrowed'
+          or tx_hash = $7
+          or exists (
+            select 1
+            from market_escrow_transfers submitted_transfer
+            where submitted_transfer.market_id = $1
+              and submitted_transfer.operation_type = 'consolidation'
+              and submitted_transfer.status in ('submitted', 'confirmed')
+              and submitted_transfer.tx_hash = $7
+              and submitted_transfer.source_escrow_note_ids = $2::uuid[]
+          )
+        )
        returning *
      ),
      source_summary as (
@@ -1966,7 +2008,23 @@ export async function markMarketPayoutSubmitted(db: QueryClient, input: {
        where id = $3::uuid
          and market_id = $1
          and status in ('escrowed', 'spent')
-         and (status = 'escrowed' or tx_hash = $6 or tx_hash is null)
+        and (
+          status = 'escrowed'
+          or tx_hash = $6
+          or tx_hash is null
+          or exists (
+            select 1
+            from market_payouts prepared_payout
+            where prepared_payout.id = $2::uuid
+              and prepared_payout.market_id = $1
+              and prepared_payout.source_escrow_note_id = $3::uuid
+              and prepared_payout.status = 'submitted'
+              and prepared_payout.tx_hash is null
+              and prepared_payout.payout_commitment_hex = $4
+              and prepared_payout.encrypted_note_ciphertext = $5
+              and prepared_payout.relay_body is not null
+          )
+        )
        returning *
      ),
      submitted_payout as (
@@ -2076,7 +2134,19 @@ export async function executeMarketPayoutTransfer(db: QueryClient, input: {
        where id = $3::uuid
          and market_id = $1
          and status in ('escrowed', 'spent')
-         and (status = 'escrowed' or tx_hash = $7)
+        and (
+          status = 'escrowed'
+          or tx_hash = $7
+          or exists (
+            select 1
+            from market_payouts submitted_payout
+            where submitted_payout.id = $2::uuid
+              and submitted_payout.market_id = $1
+              and submitted_payout.source_escrow_note_id = $3::uuid
+              and submitted_payout.status in ('submitted', 'confirmed')
+              and submitted_payout.tx_hash = $7
+          )
+        )
        returning *
      ),
      confirmed_payout as (
