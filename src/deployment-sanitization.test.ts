@@ -56,15 +56,18 @@ test("tracked runtime proof and browser scratch artifacts are absent", () => {
 
 test("Railway frontend start is explicit and can run web or worker roles", () => {
   const packageJson = JSON.parse(source("package.json"));
+  const packageLock = JSON.parse(source("package-lock.json"));
   const railwayStart = source("scripts/railway-start.mjs");
-  const nixpacks = source("nixpacks.toml");
+  const railpack = JSON.parse(source("railpack.json"));
 
+  assert.equal(packageJson.dependencies.next, "15.5.19");
+  assert.equal(packageLock.packages["node_modules/next"].version, "15.5.19");
   assert.equal(packageJson.scripts.start, "node scripts/railway-start.mjs");
   assert.match(packageJson.scripts["smoke:check"], /scripts\/railway-start\.mjs/);
   assert.match(railwayStart, /VEIL_PROCESS/);
   assert.match(railwayStart, /process\.env\.PORT \?\? "3002"/);
   assert.match(railwayStart, /scripts\/spend-worker\.mjs/);
-  assert.match(nixpacks, /npm ci/);
-  assert.match(nixpacks, /npm run build/);
-  assert.match(nixpacks, /npm run start/);
+  assert.equal(railpack.provider, "node");
+  assert.equal(railpack.deploy.startCommand, "npm run start");
+  assert.equal(existsSync(join(root, "nixpacks.toml")), false, "Railway uses Railpack for this deploy");
 });
