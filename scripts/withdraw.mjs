@@ -63,10 +63,11 @@ async function proveWithdraw(body, { tries = 12, delayMs = 5000 } = {}) {
 // relay, retried through the same RPC indexing lag at the simulation layer. When
 // step N spends the change note created by step N-1, the node simulating the relay
 // can trail the node that saw the previous relay, so the pool's on-chain root set
-// doesn't yet include the (valid) root the prover used → on-chain `verify` rejects
-// with Error(Contract, #0) / SIMULATION_REJECTED. The proof is genuinely valid; the
-// SAME relayBody will pass once the relayer lands on a caught-up node — so retry the
-// identical body (no re-prove) with backoff. A truly invalid proof just exhausts.
+// doesn't yet include the (valid) root the prover used, so the pool rejects with
+// UnknownRoot / Error(Contract, #8) / SIMULATION_REJECTED. The proof is genuinely
+// valid; the SAME relayBody will pass once the relayer lands on a caught-up node,
+// so retry the identical body (no re-prove) with backoff. Error(Contract, #0) is
+// verifier invalid_proof and must fail fast.
 async function relayWithRetry(relayBody, { tries = 18, delayMs = 5000 } = {}) {
   let lastText = "";
   for (let attempt = 1; attempt <= tries; attempt++) {
@@ -79,7 +80,7 @@ async function relayWithRetry(relayBody, { tries = 18, delayMs = 5000 } = {}) {
     lastText = await res.text();
     const transient =
       res.status === 422 &&
-      /SIMULATION_REJECTED|Error\(Contract, #0\)|verify|unknown root|invalid root|root/i.test(lastText);
+      /"class"\s*:\s*"unknown_root"|Error\(Contract,\s*#8\)|UnknownRoot|unknown root|invalid root/i.test(lastText);
     if (transient && attempt < tries) {
       console.log(`    relay simulation lagging (attempt ${attempt}/${tries}), waiting ${delayMs / 1000}s — ${lastText.slice(0, 120)}`);
       await sleep(delayMs);

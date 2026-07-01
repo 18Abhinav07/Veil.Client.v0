@@ -7,6 +7,7 @@ import { getPgPool } from "@/lib/server/db";
 import {
   classifySpendJobError,
   shouldReconcileSpendJobFailure,
+  shouldRetrySpendJobFailure,
   type SpendJobErrorClass,
 } from "@/lib/server/spendJobEngine";
 import { getInternalServiceHeaders } from "@/lib/server/internalServiceAuth";
@@ -144,7 +145,11 @@ function errorMessage(error: unknown): string {
 }
 
 function retryAfterFor(errorClass: SpendJobErrorClass): Date | null {
-  if (errorClass === "unknown" || errorClass === "already_spent_nullifier") {
+  if (
+    errorClass === "unknown" ||
+    errorClass === "already_spent_nullifier" ||
+    errorClass === "invalid_proof"
+  ) {
     return null;
   }
   return new Date(Date.now() + 15_000);
@@ -154,6 +159,7 @@ async function markFailure(input: {
   userId: string;
   jobId: string;
   stepId: string;
+  attempts: number;
   error: unknown;
   txHash?: string | null;
 }) {
@@ -178,13 +184,19 @@ async function markFailure(input: {
     return;
   }
 
+  const retryable = shouldRetrySpendJobFailure({
+    errorClass,
+    attempts: input.attempts,
+    submittedTxHash: input.txHash,
+  });
+
   await markSpendJobRetryableFailure(getPgPool(), {
     userId: input.userId,
     jobId: input.jobId,
     stepId: input.stepId,
     errorClass,
     errorMessage: message,
-    retryAfter: retryAfterFor(errorClass),
+    retryAfter: retryable ? retryAfterFor(errorClass) : null,
   });
 }
 
@@ -356,6 +368,7 @@ async function handleProve(input: {
       userId: input.userId,
       jobId: input.jobId,
       stepId: step.id,
+      attempts: step.attempts ?? 0,
       error,
     });
     return NextResponse.json({ error: errorMessage(error) }, { status: 502 });
@@ -481,6 +494,7 @@ async function handleSubmit(input: {
       userId: input.userId,
       jobId: input.jobId,
       stepId,
+      attempts: step.attempts ?? 0,
       error,
       txHash,
     });

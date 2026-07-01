@@ -63,6 +63,7 @@ interface StoredNoteRow {
   amountUnits: string;
   leafIndex: number | null;
   status: string;
+  activeJobId: string | null;
 }
 
 interface DecryptedNote {
@@ -119,6 +120,10 @@ function activeNoteStatus(status: string) {
   return status === "unspent" || status === "received";
 }
 
+function isNoteSpendable(item: DecryptedNote) {
+  return activeNoteStatus(item.row.status) && !item.row.activeJobId && item.note.leafIndex !== null;
+}
+
 const primaryButton =
   "inline-flex h-10 items-center justify-center rounded-xl bg-stone-950 px-5 text-xs font-bold uppercase tracking-wider text-white transition hover:bg-stone-850 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50";
 const secondaryButton =
@@ -149,10 +154,7 @@ export default function RequestsTab({ wallet, initialContacts, initialRequests }
   );
   const inbox = useMemo(() => requests.filter((request) => request.direction === "inbox"), [requests]);
   const sent = useMemo(() => requests.filter((request) => request.direction === "sent"), [requests]);
-  const activeNotes = useMemo(
-    () => notes.filter((item) => activeNoteStatus(item.row.status) && item.note.leafIndex !== null),
-    [notes],
-  );
+  const activeNotes = useMemo(() => notes.filter(isNoteSpendable), [notes]);
   const selectedNote = useMemo(
     () => activeNotes.find((item) => item.row.id === selectedNoteId) ?? activeNotes[0] ?? null,
     [activeNotes, selectedNoteId],
@@ -176,7 +178,7 @@ export default function RequestsTab({ wallet, initialContacts, initialRequests }
     }
     setNotes(decrypted);
     setSelectedNoteId(
-      (current) => current || (decrypted.find((item) => activeNoteStatus(item.row.status))?.row.id ?? ""),
+      (current) => current || (decrypted.find(isNoteSpendable)?.row.id ?? ""),
     );
   }, [wallet]);
 
@@ -353,6 +355,9 @@ export default function RequestsTab({ wallet, initialContacts, initialRequests }
 
   const approveRequest = async (request: PaymentRequestView) => {
     if (!selectedNote) return setError("Select a private note to pay this request");
+    if (!isNoteSpendable(selectedNote)) {
+      return setError("This private note is already locked by an active payment job");
+    }
     if (!request.requesterUserId || !request.requesterStellarPublicKey || !request.requesterBn254PublicHex || !request.requesterX25519PublicHex) {
       return setError("Requester is missing registered Note-2-Note keys");
     }

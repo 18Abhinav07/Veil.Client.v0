@@ -59,6 +59,28 @@ test("server-side relay callers default to loopback IPv4 instead of ambiguous lo
   assert.doesNotMatch(bulkWithdrawRoute, /http:\/\/localhost:3000/);
 });
 
+test("spend job advance route uses persisted attempt counts for retry decisions", () => {
+  const source = readFileSync(
+    join(
+      root,
+      "src",
+      "app",
+      "api",
+      "wallet",
+      "private",
+      "spend-jobs",
+      "[jobId]",
+      "advance",
+      "route.ts",
+    ),
+    "utf8",
+  );
+
+  assert.match(source, /attempts:\s*number/);
+  assert.match(source, /attempts:\s*step\.attempts\s*\?\?\s*0/);
+  assert.doesNotMatch(source, /attempts:\s*0,/);
+});
+
 test("reconcile route stores Lane 2 recipient output after submitted transaction recovery", () => {
   const source = readFileSync(
     join(

@@ -172,7 +172,11 @@ function errorMessage(error: unknown): string {
 }
 
 function retryAfterFor(errorClass: SpendJobErrorClass): Date | null {
-  if (errorClass === "unknown" || errorClass === "already_spent_nullifier") {
+  if (
+    errorClass === "unknown" ||
+    errorClass === "already_spent_nullifier" ||
+    errorClass === "invalid_proof"
+  ) {
     return null;
   }
   return new Date(Date.now() + 15_000);
@@ -264,12 +268,13 @@ async function markWorkerFailure(input: {
     return;
   }
 
-  await input.repository.markSpendJobNeedsReconcile({
+  await input.repository.markSpendJobRetryableFailure({
     userId: input.userId,
     jobId: input.jobId,
     stepId: input.stepId,
     errorClass,
     errorMessage: message,
+    retryAfter: null,
   });
 }
 

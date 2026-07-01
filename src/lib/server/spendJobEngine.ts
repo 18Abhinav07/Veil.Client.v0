@@ -2,6 +2,7 @@ import type { RelayBody, WithdrawResponse } from "@/types";
 
 export type SpendJobErrorClass =
   | "already_spent_nullifier"
+  | "invalid_proof"
   | "prover_pool_state_lag"
   | "relayer_simulation_lag"
   | "network_fetch"
@@ -126,14 +127,33 @@ export class AlreadySpentNullifierError extends Error {
   }
 }
 
+function messageHasClass(message: string, errorClass: string): boolean {
+  return new RegExp(`"class"\\s*:\\s*"${errorClass}"`).test(message);
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
 export function classifySpendJobError(error: unknown): SpendJobErrorClass {
   const message = errorMessage(error);
+  if (messageHasClass(message, "already_spent_nullifier")) {
+    return "already_spent_nullifier";
+  }
+  if (messageHasClass(message, "invalid_proof")) {
+    return "invalid_proof";
+  }
+  if (messageHasClass(message, "pool_state_lag")) {
+    return "prover_pool_state_lag";
+  }
+  if (messageHasClass(message, "unknown_root")) {
+    return "relayer_simulation_lag";
+  }
   if (/Error\(Contract,\s*#9\)|AlreadySpentNullifier|already spent|nullifier/i.test(message)) {
     return "already_spent_nullifier";
+  }
+  if (/Error\(Contract,\s*#0\)|Groth16Error::InvalidProof|InvalidProof/i.test(message)) {
+    return "invalid_proof";
   }
   if (
     /contracts_data_for_pool|asp_state|out of range|not been indexed|only has \d+ commitments|indexed yet/i.test(
@@ -142,7 +162,7 @@ export function classifySpendJobError(error: unknown): SpendJobErrorClass {
   ) {
     return "prover_pool_state_lag";
   }
-  if (/SIMULATION_REJECTED|Error\(Contract,\s*#0\)|unknown root|invalid root|verify/i.test(message)) {
+  if (/Error\(Contract,\s*#8\)|UnknownRoot|unknown root|invalid root|root/i.test(message)) {
     return "relayer_simulation_lag";
   }
   if (/fetch failed|network|RPC|range lag|ledger range|startLedger|timeout/i.test(message)) {
@@ -152,7 +172,11 @@ export function classifySpendJobError(error: unknown): SpendJobErrorClass {
 }
 
 function retryAfterFor(errorClass: SpendJobErrorClass): Date | null {
-  if (errorClass === "unknown" || errorClass === "already_spent_nullifier") {
+  if (
+    errorClass === "unknown" ||
+    errorClass === "already_spent_nullifier" ||
+    errorClass === "invalid_proof"
+  ) {
     return null;
   }
   return new Date(Date.now() + 15_000);
@@ -296,6 +320,12 @@ export async function advanceSpendJob(
       throw error;
     }
 
+    const retryable = shouldRetrySpendJobFailure({
+      errorClass,
+      attempts: step.attempts ?? 0,
+      submittedTxHash,
+    });
+
     await deps.repository.markRetryableFailure({
       userId: deps.userId,
       jobId: deps.jobId,
@@ -304,7 +334,7 @@ export async function advanceSpendJob(
       errorMessage: submittedTxHash
         ? `${message} after tx submission ${submittedTxHash}`
         : message,
-      retryAfter: retryAfterFor(errorClass),
+      retryAfter: retryable ? retryAfterFor(errorClass) : null,
     });
     throw error;
   }

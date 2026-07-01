@@ -111,6 +111,15 @@ test("contacts and requests wallet surfaces are wired into the unified app", () 
   assert.match(realtimeProviderSource, /subscribe/);
 });
 
+test("requests payment flow excludes notes locked by active spend jobs", () => {
+  const requestsSource = readSource("src/components/unified/RequestsTab.tsx");
+
+  assert.match(requestsSource, /function isNoteSpendable/);
+  assert.match(requestsSource, /!item\.row\.activeJobId/);
+  assert.match(requestsSource, /notes\.filter\(isNoteSpendable\)/);
+  assert.match(requestsSource, /if \(!isNoteSpendable\(selectedNote\)\)/);
+});
+
 test("wallet bootstrap loads the real public account endpoint instead of a missing public route", () => {
   const appSource = readSource("src/components/unified/UnifiedWalletApp.tsx");
 

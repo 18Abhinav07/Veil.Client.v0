@@ -55,7 +55,12 @@ test("classifies known prover and relayer lag as retryable", () => {
   assert.equal(isTransientProverLag(500, "leaf index out of range"), false);
 
   assert.equal(isTransientRelayLag(422, "SIMULATION_REJECTED: unknown root"), true);
-  assert.equal(isTransientRelayLag(422, "Error(Contract, #0) verify failed"), true);
+  assert.equal(isTransientRelayLag(422, '{"class":"unknown_root"}'), true);
+  assert.equal(isTransientProverLag(422, '{"class":"pool_state_lag"}'), true);
+  assert.equal(isTransientProverLag(422, '{"class":"invalid_proof"}'), false);
+  assert.equal(isTransientRelayLag(422, "Error(Contract, #0) verify failed"), false);
+  assert.equal(isTransientRelayLag(422, '{"class":"invalid_proof"}'), false);
+  assert.equal(isTransientRelayLag(422, "Groth16Error::InvalidProof"), false);
   assert.equal(
     isTransientRelayLag(422, "SIMULATION_REJECTED: Error(Contract, #9)"),
     false,

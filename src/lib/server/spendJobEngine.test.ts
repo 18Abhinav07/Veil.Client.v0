@@ -120,7 +120,35 @@ test("classifies already-spent contract failures as reconciliation blockers", ()
     classifySpendJobError(new Error('prover-api /prove/withdraw failed: 422 {"error":"asp_state"}')),
     "prover_pool_state_lag",
   );
+  assert.equal(
+    classifySpendJobError(
+      new Error('relayer /relay failed: 422 {"error":"SIMULATION_REJECTED","message":"HostError: Error(Contract, #0)"}'),
+    ),
+    "invalid_proof",
+  );
+  assert.equal(
+    classifySpendJobError(
+      new Error('relayer /relay failed: 422 {"error":"SIMULATION_REJECTED","class":"invalid_proof","message":"HostError: Error(Contract, #0)"}'),
+    ),
+    "invalid_proof",
+  );
+  assert.equal(
+    classifySpendJobError(
+      new Error('relayer /relay failed: 422 {"error":"SIMULATION_REJECTED","class":"unknown_root","message":"HostError: Error(Contract, #8)"}'),
+    ),
+    "relayer_simulation_lag",
+  );
   assert.equal(classifySpendJobError(new Error("fetch failed")), "network_fetch");
+});
+
+test("does not retry verifier invalid-proof simulation failures", () => {
+  assert.equal(
+    shouldRetrySpendJobFailure({
+      errorClass: "invalid_proof",
+      attempts: 0,
+    }),
+    false,
+  );
 });
 
 test("advanceSpendJob checkpoints tx hash and reconciles if indexing fails after submission", async () => {

@@ -1708,7 +1708,7 @@ export async function getNextBackgroundSpendJobCandidate(
        and j.execution_package_ciphertext is not null
        and j.execution_package_deleted_at is null
        and j.execution_package_expires_at is not null
-       and j.status in ('queued', 'running', 'waiting_retry', 'paused_needs_unlock')
+       and j.status in ('queued', 'running', 'waiting_retry', 'paused_needs_unlock', 'failed_recoverable')
        and s.status in ('queued', 'retry_wait', 'proof_ready', 'proving', 'relaying')
 	       and s.tx_hash is null
 	       and (s.retry_after is null or s.retry_after <= now())
@@ -1809,7 +1809,7 @@ export async function getNextRunnableSpendJobStep(
      join spend_job_steps s on s.job_id = j.id
 	     where j.user_id = $1
 	       and j.id = $2
-	       and j.status in ('queued', 'running', 'waiting_retry', 'paused_needs_unlock')
+	       and j.status in ('queued', 'running', 'waiting_retry', 'paused_needs_unlock', 'failed_recoverable')
 	       and s.status in ('queued', 'retry_wait', 'proof_ready')
 	       and s.tx_hash is null
 	       and (s.retry_after is null or s.retry_after <= now())
@@ -1849,7 +1849,7 @@ export async function claimNextRunnableSpendJobStep(
            join spend_job_steps s on s.job_id = j.id
            where j.user_id = $1
              and j.id = $2
-             and j.status in ('queued', 'running', 'waiting_retry', 'paused_needs_unlock')
+             and j.status in ('queued', 'running', 'waiting_retry', 'paused_needs_unlock', 'failed_recoverable')
 	             and j.active_commitment_hex = $3
 	             and j.active_amount_units = $4
 	             and j.active_leaf_index is not distinct from $5
@@ -1924,7 +1924,7 @@ export async function claimNextRunnableSpendJobStep(
            updated_at = now()
          where user_id = $1
            and id = $2
-           and status in ('queued', 'running', 'waiting_retry', 'paused_needs_unlock')`,
+           and status in ('queued', 'running', 'waiting_retry', 'paused_needs_unlock', 'failed_recoverable')`,
         [input.userId, input.jobId, leaseOwner, leaseSeconds],
       ),
       "Spend job is no longer runnable",
@@ -1972,7 +1972,7 @@ export async function markSpendJobStepProving(
       `update spend_jobs set status = 'running', updated_at = now()
        where user_id = $1
          and id = $2
-         and status in ('queued', 'running', 'waiting_retry', 'paused_needs_unlock')`,
+         and status in ('queued', 'running', 'waiting_retry', 'paused_needs_unlock', 'failed_recoverable')`,
       [input.userId, input.jobId],
     ),
     "Spend job is no longer runnable",
@@ -2143,17 +2143,19 @@ export async function markSpendJobRetryableFailure(
     retryAfter?: Date | null;
   },
 ): Promise<void> {
-  const retryAfter = input.retryAfter ?? new Date(Date.now() + 15_000);
+  const retryAfter = input.retryAfter === undefined ? new Date(Date.now() + 15_000) : input.retryAfter;
   const failedStep = one(
     await db.query<SpendJobStepRow>(
       `update spend_job_steps set
          status = case
+           when $6::timestamptz is null then 'failed_final'
            when attempts >= $7 then 'failed_final'
            else 'retry_wait'
          end,
          error_class = $4,
          error_message = $5,
          retry_after = case
+           when $6::timestamptz is null then null
            when attempts >= $7 then null
            else $6::timestamptz
          end,
@@ -2233,7 +2235,9 @@ export async function markSpendJobRetryableFailure(
       stepId: input.stepId,
       errorClass: input.errorClass,
       retryAfter:
-        failedStep?.status === "failed_final" ? null : retryAfter.toISOString(),
+        failedStep?.status === "failed_final" || retryAfter === null
+          ? null
+          : retryAfter.toISOString(),
       maxAttempts: MAX_SPEND_JOB_STEP_ATTEMPTS,
     },
   });

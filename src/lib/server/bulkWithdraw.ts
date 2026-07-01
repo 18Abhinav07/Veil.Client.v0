@@ -34,7 +34,17 @@ export class BulkWithdrawExecutionError extends Error {
   }
 }
 
+function hasErrorClass(body: string, errorClass: string): boolean {
+  return new RegExp(`"class"\\s*:\\s*"${errorClass}"`).test(body);
+}
+
 export function isTransientProverLag(status: number, body: string): boolean {
+  if (hasErrorClass(body, "invalid_proof") || hasErrorClass(body, "already_spent_nullifier")) {
+    return false;
+  }
+  if (hasErrorClass(body, "pool_state_lag")) {
+    return status === 422;
+  }
   return (
     status === 422 &&
     /out of range|not been indexed|only has \d+ commitments|indexed yet|contracts_data_for_pool|asp_state/i.test(
@@ -44,14 +54,21 @@ export function isTransientProverLag(status: number, body: string): boolean {
 }
 
 export function isTransientRelayLag(status: number, body: string): boolean {
+  if (hasErrorClass(body, "invalid_proof") || hasErrorClass(body, "already_spent_nullifier")) {
+    return false;
+  }
+  if (hasErrorClass(body, "unknown_root")) {
+    return status === 422;
+  }
   if (/Error\(Contract,\s*#9\)|AlreadySpentNullifier|already spent|nullifier/i.test(body)) {
+    return false;
+  }
+  if (/Error\(Contract,\s*#0\)|Groth16Error::InvalidProof|InvalidProof/i.test(body)) {
     return false;
   }
   return (
     status === 422 &&
-    /SIMULATION_REJECTED|Error\(Contract, #0\)|verify|unknown root|invalid root|root/i.test(
-      body,
-    )
+    /Error\(Contract,\s*#8\)|UnknownRoot|unknown root|invalid root|root/i.test(body)
   );
 }
 

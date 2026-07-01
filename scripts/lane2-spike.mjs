@@ -105,7 +105,7 @@ async function relayWithRetry(relayBody, { tries = 18, delayMs = 5000 } = {}) {
     const text = await response.text();
     if (response.ok) return JSON.parse(text);
     last = text;
-    const transient = /SIMULATION_REJECTED|Error\(Contract, #0\)|verify|unknown root|invalid root|root/i.test(text);
+    const transient = /"class"\s*:\s*"unknown_root"|Error\(Contract,\s*#8\)|UnknownRoot|unknown root|invalid root/i.test(text);
     if (response.status === 422 && transient && attempt < tries) {
       console.log(`  relayer lagging (attempt ${attempt}/${tries}), waiting ${delayMs / 1000}s`);
       await sleep(delayMs);

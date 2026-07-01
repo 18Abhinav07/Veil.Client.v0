@@ -324,7 +324,12 @@ test("spend job step claim is sequential and bound to the active source note", a
   assert.match(sql, /previous\.status <> 'confirmed'/i);
   assert.match(sql, /j\.active_commitment_hex = \$3/i);
   assert.match(sql, /s\.source_commitment_hex = \$3/i);
-  assert.match(sql, /status in \('queued', 'retry_wait', 'proof_ready', 'proving', 'relaying'\)/i);
+  assert.match(sql, /j\.status in \('queued', 'running', 'waiting_retry', 'paused_needs_unlock', 'failed_recoverable'\)/i);
+  assert.match(sql, /s\.status in \('queued', 'retry_wait', 'proof_ready', 'proving', 'relaying'\)/i);
+  assert.doesNotMatch(
+    sql,
+    /[^.]status in \('queued', 'retry_wait', 'proof_ready', 'proving', 'relaying'\)/i,
+  );
   assert.match(sql, /s\.tx_hash is null/i);
   assert.match(sql, /relay_body = null/i);
   assert.match(sql, /commit/i);
@@ -464,7 +469,8 @@ test("retryable failures become recoverable after bounded automatic retries", as
   });
 
   const sql = db.combinedSql();
-  assert.match(sql, /case\s+when attempts >= \$7 then 'failed_final'\s+else 'retry_wait'\s+end/i);
+  assert.match(sql, /when \$6::timestamptz is null then 'failed_final'/i);
+  assert.match(sql, /when attempts >= \$7 then 'failed_final'/i);
   assert.match(sql, /case\s+when failed_step\.status = 'failed_final' then 'failed_recoverable'\s+else 'waiting_retry'\s+end/i);
   assert.match(sql, /else \$6::timestamptz/i);
   assert.match(sql, /else \$5::timestamptz/i);

@@ -425,7 +425,17 @@ export async function POST(request: Request) {
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (/prover-api \/prove\/deposit|fetch failed/i.test(message)) {
+    if (/prover-api \/prove\/deposit failed:\s*422/i.test(message)) {
+      return NextResponse.json(
+        {
+          error:
+            "Market deposit transaction was rejected during simulation. Check the prover artifact configuration and pool state, then try again.",
+          detail: message,
+        },
+        { status: 422 },
+      );
+    }
+    if (/fetch failed|ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|AggregateError/i.test(message)) {
       return NextResponse.json(
         {
           error:

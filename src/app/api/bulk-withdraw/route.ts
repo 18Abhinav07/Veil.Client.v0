@@ -26,7 +26,7 @@ import type { WithdrawResponse, RelayBody } from "@/types";
 //     relay           (retried through simulation lag)          — the node that
 //        simulates the relay can trail the node that mined the previous change
 //        note, so the pool's on-chain root set doesn't yet include the (valid)
-//        root the prover used → Error(Contract, #0) / SIMULATION_REJECTED. The
+//        root the prover used → Error(Contract, #8) / SIMULATION_REJECTED. The
 //        proof is genuinely valid; the SAME body passes once the relayer lands on
 //        a caught-up node — so retry the identical body (no re-prove) with backoff.
 //     wait + find leaf (between steps) — the next step spends this step's change

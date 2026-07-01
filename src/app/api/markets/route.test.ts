@@ -70,6 +70,8 @@ test("market deposit API prepares submits finalizes and stores notes against iso
   assert.match(depositSource, /Market prover is unavailable/);
   assert.match(depositSource, /Start the prover API on port 3001/);
   assert.match(depositSource, /status: 503/);
+  assert.match(depositSource, /Market deposit transaction was rejected during simulation/);
+  assert.match(depositSource, /status: 422/);
   assert.match(depositSource, /Stellar RPC is unavailable/);
   assert.doesNotMatch(depositSource, /Check the public wallet USDC balance/);
   assert.match(depositSource, /signingPayloadBase64/);
