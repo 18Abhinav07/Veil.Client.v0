@@ -13,7 +13,7 @@ import { useWalletRealtimeEvent } from "./WalletRealtimeProvider";
 
 const POOL_ID =
   process.env.NEXT_PUBLIC_POOL_ID ??
-  "CBKWZP63CWSBAHPE2MO6ZQH2DDO3JEKKMYT2Z6WW3WW3FZQL2KGHV4QA";
+  "CA2LFUXWJB73N3VKKLOMDNTXHTZ2WUF5KATU424WWKTTBDJZ6EJFJEM4";
 
 interface ContactView {
   id: string;

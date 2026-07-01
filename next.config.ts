@@ -8,11 +8,11 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_POOL_ID:
       process.env.NEXT_PUBLIC_POOL_ID ??
       process.env.POOL_ID ??
-      "CBKWZP63CWSBAHPE2MO6ZQH2DDO3JEKKMYT2Z6WW3WW3FZQL2KGHV4QA",
+      "CA2LFUXWJB73N3VKKLOMDNTXHTZ2WUF5KATU424WWKTTBDJZ6EJFJEM4",
     NEXT_PUBLIC_POOL_DEPLOYMENT_LEDGER:
       process.env.NEXT_PUBLIC_POOL_DEPLOYMENT_LEDGER ??
       process.env.POOL_DEPLOYMENT_LEDGER ??
-      "3348076",
+      "3381563",
   },
   // Prover-api is called server-side only — no browser env leak.
   serverExternalPackages: [

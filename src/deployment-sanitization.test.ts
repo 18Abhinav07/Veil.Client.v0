@@ -4,8 +4,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const root = process.cwd();
-const walletPoolContract = "CBKWZP63CWSBAHPE2MO6ZQH2DDO3JEKKMYT2Z6WW3WW3FZQL2KGHV4QA";
-const staleWalletPoolContract = "CCGTSXKMJUMPKKCZY7JMW4266XVLYCRM6I7ZIFWVGQBIDSGM7SVMAWXD";
+const walletPoolContract = "CA2LFUXWJB73N3VKKLOMDNTXHTZ2WUF5KATU424WWKTTBDJZ6EJFJEM4";
+const staleWalletPoolContracts = [
+  "CCGTSXKMJUMPKKCZY7JMW4266XVLYCRM6I7ZIFWVGQBIDSGM7SVMAWXD",
+  "CBKWZP63CWSBAHPE2MO6ZQH2DDO3JEKKMYT2Z6WW3WW3FZQL2KGHV4QA",
+];
 
 function source(path: string) {
   return readFileSync(join(root, path), "utf8");
@@ -20,7 +23,9 @@ test("production wallet fallbacks use the live depth-10 wallet pool", () => {
   ]) {
     const contents = source(path);
     assert.match(contents, new RegExp(walletPoolContract), `${path} should default to the live wallet pool`);
-    assert.doesNotMatch(contents, new RegExp(staleWalletPoolContract), `${path} must not use the stale wallet pool`);
+    for (const staleWalletPoolContract of staleWalletPoolContracts) {
+      assert.doesNotMatch(contents, new RegExp(staleWalletPoolContract), `${path} must not use stale wallet pools`);
+    }
   }
   assert.doesNotMatch(source("next.config.ts"), /NEXT_PUBLIC_RELAYER_URL:\s*process\.env\.RELAYER_URL/);
 });
