@@ -48,15 +48,13 @@ export default function Sidebar({
       `}
     >
       {/* Header / Brand */}
-      <div className="flex h-16 items-center shrink-0 px-4 overflow-hidden">
-        {/* Collapsed: single letter, centred */}
-        <span className="block group-hover:hidden mx-auto text-lg font-black tracking-tighter text-stone-950 select-none">
-          V
-        </span>
-        {/* Expanded: full wordmark */}
-        <span className="hidden group-hover:block text-3xl font-black tracking-tighter text-stone-950 select-none whitespace-nowrap animate-in fade-in duration-150">
-          VEIL
-        </span>
+      <div className="flex h-16 items-center shrink-0 px-3.5 overflow-hidden">
+        <img
+          src="/Veil_Bg_Removed_Logo.png"
+          alt="Veil Logo"
+          className="h-5 group-hover:h-8 w-auto object-contain transition-all duration-200 select-none mx-auto group-hover:ml-0 group-hover:mr-auto"
+          draggable={false}
+        />
       </div>
 
       {/* Navigation */}

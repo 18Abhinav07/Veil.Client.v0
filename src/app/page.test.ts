@@ -12,7 +12,7 @@ function readSource(path: string) {
 test("home page is the only stripped entry page and links to wallet sign in", () => {
   const source = readSource("src/app/page.tsx");
 
-  assert.match(source, /<h1>VEIL<\/h1>/);
+  assert.match(source, /Veil_Bg_Removed_Logo/);
   assert.match(source, /href="\/signin\?callbackUrl=\/wallet"/);
   assert.match(source, /Get started/);
   assert.doesNotMatch(source, /getServerSession/);

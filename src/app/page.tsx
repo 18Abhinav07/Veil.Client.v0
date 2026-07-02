@@ -181,10 +181,59 @@ export default function HomePage() {
         <div className="absolute inset-0 bg-zinc-950/40" />
       </div>
 
+      {/* TOP HEADER NAVIGATION */}
+      <header className="absolute top-0 left-0 right-0 z-20 flex h-20 items-center justify-start px-8 select-none">
+        <img
+          src="/Veil_Bg_Removed_Logo.png"
+          alt="Veil Mini Logo"
+          className="h-5 w-auto object-contain opacity-70 hover:opacity-100 transition-opacity"
+          draggable={false}
+        />
+      </header>
+
       {/* 3D INTERACTIVE CONTENT */}
       <div className="home-minimal-content">
-        <div className="veil-title-container">
-          <h1>VEIL</h1>
+        <div className="veil-title-container select-none">
+          <svg
+            viewBox="0 0 540 100"
+            className="w-[90vw] max-w-[960px] h-auto mx-auto filter drop-shadow-[0_12px_12px_rgba(0,0,0,0.85)]"
+            style={{ color: "#ffffff" }}
+          >
+            {/* Letter V */}
+            <path
+              d="M 15 15 L 60 85 L 105 15"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="11"
+              strokeLinecap="butt"
+              strokeLinejoin="miter"
+            />
+            {/* Letter E (three horizontal bars) */}
+            <path
+              d="M 155 20 L 235 20 M 155 50 L 235 50 M 155 80 L 235 80"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="11"
+              strokeLinecap="butt"
+            />
+            {/* Letter I */}
+            <path
+              d="M 330 15 L 330 85"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="11"
+              strokeLinecap="butt"
+            />
+            {/* Letter L */}
+            <path
+              d="M 435 15 L 435 85 L 495 85"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="11"
+              strokeLinecap="butt"
+              strokeLinejoin="miter"
+            />
+          </svg>
         </div>
 
         <Link href="/signin?callbackUrl=/wallet">

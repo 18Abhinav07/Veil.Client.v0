@@ -805,13 +805,13 @@ export default function MarketDetailPage({
       {/* Sidebar */}
       <aside className="fixed bottom-0 left-0 top-0 hidden md:flex flex-col border-r border-stone-200 bg-stone-50/60 backdrop-blur-xl z-40 w-14 hover:w-52 transition-[width] duration-200 ease-in-out overflow-hidden group">
         {/* Header / Brand */}
-        <div className="flex h-16 items-center shrink-0 px-4 overflow-hidden">
-          <span className="block group-hover:hidden mx-auto text-lg font-bold tracking-tighter text-stone-950 select-none">
-            V
-          </span>
-          <span className="hidden group-hover:block text-3xl font-bold tracking-tighter text-stone-950 select-none whitespace-nowrap animate-in fade-in duration-150">
-            VEIL
-          </span>
+        <div className="flex h-16 items-center shrink-0 px-3.5 overflow-hidden">
+          <img
+            src="/Veil_Bg_Removed_Logo.png"
+            alt="Veil Logo"
+            className="h-5 group-hover:h-8 w-auto object-contain transition-all duration-200 select-none mx-auto group-hover:ml-0 group-hover:mr-auto"
+            draggable={false}
+          />
         </div>
 
         {/* Navigation */}
