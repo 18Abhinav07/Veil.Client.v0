@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Clock, Loader2, Search, ReceiptText, UserPlus, Check, X } from "lucide-react";
 import { motion } from "framer-motion";
 import { DitherShader } from "./DitherShader";
@@ -145,6 +145,7 @@ export default function RequestsTab({ wallet, initialContacts, initialRequests }
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState<"inbound" | "outbound" | "create">("inbound");
+  const requestRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const busy = refreshing || sendingRequest || processingRequestId !== null || decliningRequestId !== null;
 
@@ -215,6 +216,14 @@ export default function RequestsTab({ wallet, initialContacts, initialRequests }
     await decryptRequestRows(requestsData.requests);
   }, [decryptRequestRows]);
 
+  const scheduleWalletRefresh = useCallback(() => {
+    if (requestRefreshTimer.current) return;
+    requestRefreshTimer.current = setTimeout(() => {
+      requestRefreshTimer.current = null;
+      void Promise.all([refresh(), loadNotes()]).catch(() => undefined);
+    }, 600);
+  }, [loadNotes, refresh]);
+
   useEffect(() => {
     if (initialContacts !== undefined) {
       setContacts(initialContacts);
@@ -225,19 +234,34 @@ export default function RequestsTab({ wallet, initialContacts, initialRequests }
     void Promise.all([refresh(), loadNotes()]).catch((err) => setError(String(err)));
   }, [decryptRequestRows, initialContacts, initialRequests, loadNotes, refresh]);
 
+  useEffect(() => {
+    return () => {
+      if (requestRefreshTimer.current) {
+        clearTimeout(requestRefreshTimer.current);
+        requestRefreshTimer.current = null;
+      }
+    };
+  }, []);
+
   useWalletRealtimeEvent(
     useCallback(
       (event) => {
+        if (event.event === "stream_error") {
+          setError(String(event.data.error ?? "Realtime stream error"));
+          return;
+        }
         if (event.event !== "wallet_activity") return;
         const eventType = String(event.data.eventType ?? "");
-        if (eventType.startsWith("payment_request_") || eventType.startsWith("contact_")) {
-          void refresh().catch(() => undefined);
-        }
-        if (eventType === "private_note_received") {
-          void loadNotes().catch(() => undefined);
+        if (
+          eventType.startsWith("payment_request_") ||
+          eventType.startsWith("contact_") ||
+          eventType.startsWith("spend_job_") ||
+          eventType === "private_note_received"
+        ) {
+          scheduleWalletRefresh();
         }
       },
-      [loadNotes, refresh],
+      [scheduleWalletRefresh],
     ),
   );
 

@@ -482,7 +482,6 @@ export default function PrivateActivity({ wallet, initialJobs }: PrivateActivity
   useEffect(() => {
     if (initialJobs !== undefined) {
       setJobs(initialJobs);
-      return;
     }
     void refreshJobs();
   }, [initialJobs, refreshJobs]);
@@ -641,7 +640,7 @@ export default function PrivateActivity({ wallet, initialJobs }: PrivateActivity
             </p>
           </div>
         ) : (
-          <ExpandableCard items={activityItems} className="px-0 py-1" />
+          <ExpandableCard items={activityItems} className="px-0 py-1" variant="white" />
         )}
       </section>
     </div>

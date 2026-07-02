@@ -17,14 +17,21 @@ export interface CardItem {
 interface ExpandableCardProps {
   items: CardItem[];
   className?: string;
+  variant?: "soft" | "white";
 }
 
 export default function ExpandableCard({
   items,
   className,
+  variant = "soft",
 }: ExpandableCardProps) {
-  const [current, setCurrent] = useState<CardItem | null>(null);
-  const ref = useOutsideClick(() => setCurrent(null));
+  const [currentId, setCurrentId] = useState<string | null>(null);
+  const current = items.find((item) => item.id === currentId) ?? null;
+  const ref = useOutsideClick(() => setCurrentId(null));
+  const itemSurfaceClass =
+    variant === "white"
+      ? "border border-stone-200/70 bg-white hover:bg-stone-50 shadow-sm shadow-stone-950/[0.03] hover:border-stone-300/80"
+      : "border border-transparent bg-stone-50/50 hover:border-stone-200/50 hover:bg-stone-50";
 
   return (
     <div className="w-full">
@@ -61,7 +68,7 @@ export default function ExpandableCard({
                         {current.title}
                       </motion.div>
                       <button
-                        onClick={() => setCurrent(null)}
+                        onClick={() => setCurrentId(null)}
                         className="text-stone-400 hover:text-stone-600 transition p-1 rounded-full hover:bg-stone-50 shrink-0"
                         aria-label="Close"
                       >
@@ -119,10 +126,8 @@ export default function ExpandableCard({
                 duration: 0.15,
                 ease: "easeOut",
               }}
-              className="bg-stone-50/50 hover:bg-stone-50 flex w-full cursor-pointer flex-row items-center gap-4 rounded-xl p-4 transition-all duration-200 border border-transparent hover:border-stone-200/50"
-              onClick={() => {
-                setCurrent(item);
-              }}
+              className={`${itemSurfaceClass} flex w-full cursor-pointer flex-row items-center gap-4 rounded-xl p-4 transition-all duration-200`}
+              onClick={() => setCurrentId(item.id)}
             >
               <motion.div layoutId={`cardItemIcon-${item.id}`} className="shrink-0">
                 {item.icon}

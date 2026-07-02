@@ -71,6 +71,7 @@ export default function PublicActivity({
 }: PublicActivityProps) {
   const [transactions, setTransactions] = useState<PublicTransactionView[]>(initialTransactions ?? []);
   const [loading, setLoading] = useState(initialTransactions === undefined);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
 
   const refresh = useCallback(async () => {
@@ -87,15 +88,16 @@ export default function PublicActivity({
     }
   }, []);
 
+  const handleManualRefresh = useCallback(() => {
+    setRefreshing(true);
+    refresh().finally(() => setRefreshing(false));
+  }, [refresh]);
+
   useEffect(() => {
     if (initialTransactions !== undefined) {
       setTransactions(initialTransactions);
       setLoading(false);
     }
-  }, [initialTransactions]);
-
-  useEffect(() => {
-    if (initialTransactions !== undefined) return;
     void refresh();
   }, [initialTransactions, refresh]);
 
@@ -124,9 +126,26 @@ export default function PublicActivity({
 
   return (
     <div className="mx-auto max-w-4xl space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div>
-        <h2 className="text-3xl font-semibold tracking-tight text-stone-950">Public Activity</h2>
-        <p className="mt-2 text-sm text-stone-600">Confirmed public Stellar actions for this wallet.</p>
+      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div>
+          <h2 className="text-3xl font-semibold tracking-tight text-stone-950">Public Activity</h2>
+          <p className="mt-2 text-sm text-stone-600">Confirmed public Stellar actions for this wallet.</p>
+        </div>
+        <button
+          type="button"
+          onClick={handleManualRefresh}
+          disabled={loading || refreshing}
+          className="inline-flex h-10 items-center justify-center rounded-xl border border-stone-200 bg-white px-4 text-xs font-bold text-stone-800 shadow-sm transition-all hover:border-stone-300 hover:bg-stone-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {refreshing ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              <span>Refreshing...</span>
+            </>
+          ) : (
+            <span>Refresh</span>
+          )}
+        </button>
       </div>
 
       {loading ? (

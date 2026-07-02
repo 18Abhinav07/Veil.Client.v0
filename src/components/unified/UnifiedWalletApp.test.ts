@@ -235,8 +235,44 @@ test("wallet realtime badges are filtered and coalesced instead of refetched for
   assert.match(privateActivitySource, /jobRefreshTimer/);
   assert.match(privateActivitySource, /scheduleJobsRefresh/);
   assert.doesNotMatch(privateActivitySource, /event\.event === "connected" \|\| eventType\.startsWith\("spend_job_"\)/);
-  assert.doesNotMatch(requestsSource, /eventType === "private_note_received" \|\| eventType\.startsWith\("spend_job_"\)/);
+  assert.match(requestsSource, /requestRefreshTimer/);
+  assert.match(requestsSource, /scheduleWalletRefresh/);
+  assert.match(requestsSource, /eventType\.startsWith\("spend_job_"\)/);
   assert.match(requestsSource, /eventType === "private_note_received"/);
+});
+
+test("expanded request and activity rows stay bound to live item state", () => {
+  const expandableSource = readSource("src/components/unified/ExpandableCard.tsx");
+  const requestsSource = readSource("src/components/unified/RequestsTab.tsx");
+
+  assert.match(expandableSource, /const \[currentId, setCurrentId\] = useState<string \| null>\(null\)/);
+  assert.match(expandableSource, /items\.find\(\(item\) => item\.id === currentId\) \?\? null/);
+  assert.match(expandableSource, /onClick=\{\(\) => setCurrentId\(item\.id\)\}/);
+  assert.doesNotMatch(expandableSource, /useState<CardItem \| null>/);
+  assert.match(requestsSource, /selectedNote/);
+  assert.match(requestsSource, /processingRequestId === request\.id/);
+});
+
+test("private activity history uses the clean white card surface", () => {
+  const expandableSource = readSource("src/components/unified/ExpandableCard.tsx");
+  const privateActivitySource = readSource("src/components/unified/PrivateActivity.tsx");
+
+  assert.match(expandableSource, /variant\?: "soft" \| "white"/);
+  assert.match(expandableSource, /variant === "white"/);
+  assert.match(expandableSource, /bg-white hover:bg-stone-50/);
+  assert.match(privateActivitySource, /<ExpandableCard items=\{activityItems\} className="px-0 py-1" variant="white" \/>/);
+});
+
+test("activity pages reconcile bootstrap data with fresh server state on entry", () => {
+  const privateActivitySource = readSource("src/components/unified/PrivateActivity.tsx");
+  const publicActivitySource = readSource("src/components/unified/PublicActivity.tsx");
+
+  assert.match(privateActivitySource, /setJobs\(initialJobs\)/);
+  assert.match(privateActivitySource, /void refreshJobs\(\)/);
+  assert.doesNotMatch(privateActivitySource, /if \(initialJobs !== undefined\)[\s\S]{0,120}return;/);
+  assert.match(publicActivitySource, /setTransactions\(initialTransactions\)/);
+  assert.match(publicActivitySource, /void refresh\(\)/);
+  assert.doesNotMatch(publicActivitySource, /if \(initialTransactions !== undefined\) return;/);
 });
 
 test("wallet exposes a visible notification inbox instead of write-only backend notifications", () => {
