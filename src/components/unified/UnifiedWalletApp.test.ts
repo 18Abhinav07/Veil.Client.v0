@@ -126,6 +126,19 @@ test("contacts and requests wallet surfaces are wired into the unified app", () 
   assert.match(realtimeProviderSource, /subscribe/);
 });
 
+test("contacts and requests reconcile bootstrap data with fresh server state on entry", () => {
+  const contactsSource = readSource("src/components/unified/ContactsTab.tsx");
+  const requestsSource = readSource("src/components/unified/RequestsTab.tsx");
+
+  assert.match(contactsSource, /setContacts\(initialContacts\)/);
+  assert.match(contactsSource, /void refresh\(\)\.catch\(\(err\) => setError\(String\(err\)\)\)/);
+  assert.doesNotMatch(contactsSource, /if \(initialContacts !== undefined\)[\s\S]{0,120}return;/);
+  assert.match(requestsSource, /setContacts\(initialContacts\)/);
+  assert.match(requestsSource, /void decryptRequestRows\(initialRequests\)/);
+  assert.match(requestsSource, /void Promise\.all\(\[refresh\(\), loadNotes\(\)\]\)/);
+  assert.doesNotMatch(requestsSource, /if \(initialRequests !== undefined\)[\s\S]{0,220}return;/);
+});
+
 test("contacts and requests dither image paths match deployed public assets exactly", () => {
   const contactsSource = readSource("src/components/unified/ContactsTab.tsx");
   const requestsSource = readSource("src/components/unified/RequestsTab.tsx");

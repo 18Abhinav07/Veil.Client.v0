@@ -220,10 +220,7 @@ export default function RequestsTab({ wallet, initialContacts, initialRequests }
       setContacts(initialContacts);
     }
     if (initialRequests !== undefined) {
-      void decryptRequestRows(initialRequests)
-        .then(() => loadNotes())
-        .catch((err) => setError(String(err)));
-      return;
+      void decryptRequestRows(initialRequests).catch((err) => setError(String(err)));
     }
     void Promise.all([refresh(), loadNotes()]).catch((err) => setError(String(err)));
   }, [decryptRequestRows, initialContacts, initialRequests, loadNotes, refresh]);

@@ -74,7 +74,6 @@ export default function ContactsTab({ initialContacts }: { initialContacts?: Con
   useEffect(() => {
     if (initialContacts !== undefined) {
       setContacts(initialContacts);
-      return;
     }
     void refresh().catch((err) => setError(String(err)));
   }, [initialContacts, refresh]);
