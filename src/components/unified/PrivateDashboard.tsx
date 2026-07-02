@@ -1731,28 +1731,29 @@ export default function PrivateDashboard({
       </div>
 
       {backgroundBatchPrompt && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-stone-950/18 px-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-stone-950/20 px-4 backdrop-blur-sm">
           <div
+            data-background-batch-dialog
             role="dialog"
             aria-modal="true"
             aria-labelledby="background-batch-title"
             aria-describedby="background-batch-description"
-            className="w-full max-w-md overflow-hidden rounded-3xl border border-stone-200 bg-[oklch(99%_0.006_86)] shadow-[0_30px_90px_rgba(28,25,23,0.20)]"
+            className="w-full max-w-[460px] overflow-hidden rounded-2xl border border-stone-200/80 bg-white shadow-[0_24px_70px_oklch(32%_0.018_78/.16)]"
           >
-            <div className="border-b border-stone-200/70 bg-gradient-to-br from-indigo-50/70 to-stone-50 px-6 py-5">
+            <div className="border-b border-stone-200/70 px-6 pb-4 pt-6">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-700">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-stone-500">
                     Background execution
                   </p>
                   <h3
                     id="background-batch-title"
-                    className="mt-2 text-xl font-semibold tracking-normal text-stone-950"
+                    className="mt-2 text-lg font-semibold tracking-normal text-stone-950"
                   >
                     Send batch in background
                   </h3>
                 </div>
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-indigo-200 bg-white text-indigo-700 shadow-sm">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-stone-200 bg-stone-50 text-stone-700">
                   <Send size={17} />
                 </div>
               </div>
@@ -1761,30 +1762,28 @@ export default function PrivateDashboard({
             <div className="space-y-5 px-6 py-5">
               <p
                 id="background-batch-description"
-                className="text-sm leading-6 text-stone-650"
+                className="text-sm leading-6 text-stone-600"
               >
-                Send the batch to worker for async execution in an encrypted package.
-                The batch can continue if this tab closes, and progress will stay visible in Activity.
+                Keep this batch running while you leave the tab or continue in the wallet.
+                The worker receives an encrypted package and Activity tracks each payment.
               </p>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-2xl border border-stone-200 bg-white p-4">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-stone-400">
+              <div className="rounded-2xl border border-stone-200/70 bg-stone-50/70 p-4">
+                <div className="flex items-center justify-between gap-4">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
                     Recipients
                   </p>
-                  <p className="mt-1 text-2xl font-semibold text-stone-950">
+                  <p className="font-mono text-lg font-semibold text-stone-950">
                     {backgroundBatchPrompt.recipientCount}
                   </p>
                 </div>
-                <div className="rounded-2xl border border-stone-200 bg-white p-4">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-stone-400">
-                    Total
+                <div className="mt-3 flex items-end justify-between gap-4 border-t border-stone-200/70 pt-3">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-stone-500">
+                    Total spend
                   </p>
-                  <p className="mt-1 text-2xl font-semibold text-stone-950">
+                  <p className="font-mono text-lg font-semibold text-stone-950">
                     {formatStellarUnits(backgroundBatchPrompt.totalAmountUnits, "").split(" ")[0]}
-                  </p>
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-stone-400">
-                    USDC
+                    <span className="ml-1 text-xs font-semibold text-stone-500">USDC</span>
                   </p>
                 </div>
               </div>
@@ -1797,7 +1796,7 @@ export default function PrivateDashboard({
                     setStatusMsg("");
                   }}
                   disabled={spending}
-                  className="h-12 flex-1 rounded-xl border border-stone-200 bg-white text-xs font-bold uppercase tracking-widest text-stone-700 transition hover:bg-stone-50 disabled:opacity-50"
+                  className="h-11 flex-1 rounded-xl border border-stone-200 bg-white text-sm font-semibold text-stone-700 transition hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-stone-300 focus:ring-offset-2 disabled:opacity-50"
                 >
                   Cancel
                 </button>
@@ -1805,7 +1804,7 @@ export default function PrivateDashboard({
                   type="button"
                   onClick={() => void submitPrivateSend({ backgroundApproved: true })}
                   disabled={spending}
-                  className="flex h-12 flex-1 items-center justify-center gap-2 rounded-xl bg-stone-950 text-xs font-bold uppercase tracking-widest text-white transition hover:bg-stone-800 disabled:opacity-50"
+                  className="flex h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-stone-950 text-sm font-semibold text-white transition hover:bg-stone-800 focus:outline-none focus:ring-2 focus:ring-stone-300 focus:ring-offset-2 disabled:opacity-50"
                 >
                   {spending ? (
                     <>
