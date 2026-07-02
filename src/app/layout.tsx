@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Veil — Private Payments Wallet",
+  title: "V E I L",
   description: "Privacy-preserving USDC payments on Stellar. Shield, transfer, and manage USDC with ZK-proof privacy.",
   icons: {
     icon: "/Veil_Bg_Removed_Logo.png",

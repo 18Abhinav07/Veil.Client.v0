@@ -186,7 +186,7 @@ export default function HomePage() {
         <img
           src="/Veil_Bg_Removed_Logo.png"
           alt="Veil Mini Logo"
-          className="h-5 w-auto object-contain opacity-70 hover:opacity-100 transition-opacity"
+          className="h-10 w-auto object-contain opacity-70 hover:opacity-100 transition-opacity"
           draggable={false}
         />
       </header>
@@ -196,7 +196,7 @@ export default function HomePage() {
         <div className="veil-title-container select-none">
           <svg
             viewBox="0 0 540 100"
-            className="w-[90vw] max-w-[960px] h-auto mx-auto filter drop-shadow-[0_12px_12px_rgba(0,0,0,0.85)]"
+            className="w-[85vw] max-w-[480px] h-auto mx-auto filter drop-shadow-[0_12px_12px_rgba(0,0,0,0.85)]"
             style={{ color: "#ffffff" }}
           >
             {/* Letter V */}
