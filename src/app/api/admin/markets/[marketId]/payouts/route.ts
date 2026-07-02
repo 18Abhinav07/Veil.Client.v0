@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
+import { Keypair, Networks, TransactionBuilder } from "@stellar/stellar-sdk";
 
 import {
   findNoteLeafIndexInPool,
   findPoolCommitmentEventInPool,
+  submitSignedXdr,
   waitForTransaction,
 } from "@/lib/stellar";
 import { isTransientProverLag, isTransientRelayLag } from "@/lib/server/bulkWithdraw";
@@ -44,6 +46,7 @@ const RELAYER_URL =
   SERVER_ENV.RELAYER_URL ??
   SERVER_ENV.NEXT_PUBLIC_RELAYER_URL ??
   "http://127.0.0.1:3000";
+const NETWORK_PASSPHRASE = SERVER_ENV.NETWORK_PASSPHRASE ?? Networks.TESTNET;
 
 type EncryptedOutputEnvelope = {
   encryptedOutputKind?: string;
@@ -264,6 +267,58 @@ async function proveTransfer(body: unknown): Promise<TransferResponse> {
       isRetryableStatus: isTransientProverLag,
     },
   );
+}
+
+async function ensureMarketEscrowAspMembership(keys: MarketEscrowKeys) {
+  const adminKeypair = Keypair.fromSecret(readEnv("ASP_MEMBERSHIP_ADMIN_SECRET"));
+  const prepared = await fetchJsonWithRetry<Record<string, unknown>>(
+    `${PROVER_API}/prove/register-asp-membership`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...getInternalServiceHeaders() },
+      body: JSON.stringify({
+        adminStellarAddress: adminKeypair.publicKey(),
+        notePublicKeyHex: keys.senderNotePublicHex,
+        membershipBlindingHex: keys.membershipBlindingHex,
+      }),
+    },
+    {
+      serviceName: "prover-api /prove/register-asp-membership",
+      tries: 6,
+      delayMs: 1000,
+      isRetryableStatus: isTransientProverLag,
+    },
+  );
+  const membershipLeafHex = readString(
+    prepared.membershipLeafHex,
+    "escrow ASP membership leaf",
+  );
+  if (prepared.alreadyMember === true) {
+    return {
+      alreadyMember: true,
+      membershipLeafHex,
+      txHash: null as string | null,
+      minedLedger: null as number | null,
+    };
+  }
+
+  const unsignedXdr = readString(
+    prepared.unsignedXdr,
+    "escrow ASP registration unsignedXdr",
+  );
+  const transaction = TransactionBuilder.fromXDR(
+    unsignedXdr,
+    NETWORK_PASSPHRASE || Networks.TESTNET,
+  );
+  transaction.sign(adminKeypair);
+  const txHash = await submitSignedXdr(transaction.toXDR());
+  const minedLedger = await waitForTransaction(txHash);
+  return {
+    alreadyMember: false,
+    membershipLeafHex,
+    txHash,
+    minedLedger,
+  };
 }
 
 async function relayWithRetry(relayBody: RelayBody): Promise<{ txHash: string }> {
@@ -893,6 +948,8 @@ async function executeEscrowConsolidationStep(input: {
     throw new Error("Consolidation source notes must use the same market pool");
   }
 
+  await ensureMarketEscrowAspMembership(input.keys);
+
   const firstNote = await decryptEscrowNote({
     note: {
       commitment_hex: first.commitment_hex,
@@ -1119,6 +1176,8 @@ export async function POST(
     }
 
     const keys = readMarketEscrowKeys();
+    await ensureMarketEscrowAspMembership(keys);
+
     const sourceNote = await decryptEscrowNote({
       note: payoutSourceNote(payout),
       notePrivateKeyHex: keys.notePrivateKeyHex,

@@ -231,6 +231,9 @@ test("market admin APIs are restricted and can seed and resolve markets", () => 
   assert.match(payoutSource, /findPoolCommitmentEventInPool/);
   assert.match(payoutSource, /recoverPreparedPayoutSubmission/);
   assert.match(payoutSource, /recoverPreparedConsolidationSubmission/);
+  assert.match(payoutSource, /ensureMarketEscrowAspMembership/);
+  assert.match(payoutSource, /register-asp-membership/);
+  assert.match(payoutSource, /ASP_MEMBERSHIP_ADMIN_SECRET/);
   assert.match(payoutSource, /encryptedPayoutNoteCiphertext/);
   assert.match(payoutSource, /inputNotes/);
   assert.match(payoutSource, /consolidatedCount/);

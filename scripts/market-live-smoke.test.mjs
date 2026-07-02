@@ -17,8 +17,13 @@ test("market live smoke script is exposed and syntax-checked", () => {
 
   assert.equal(packageJson.scripts["smoke:live:market"], "node scripts/market-live-smoke.mjs");
   assert.equal(packageJson.scripts["smoke:live:market:auto"], "node scripts/market-e2e-run.mjs");
+  assert.equal(
+    packageJson.scripts["market:register-escrow-asp"],
+    "node scripts/register-market-escrow-asp.mjs",
+  );
   assert.match(packageJson.scripts["smoke:check"], /node --check scripts\/market-live-smoke\.mjs/);
   assert.match(packageJson.scripts["smoke:check"], /node --check scripts\/market-e2e-run\.mjs/);
+  assert.match(packageJson.scripts["smoke:check"], /node --check scripts\/register-market-escrow-asp\.mjs/);
 });
 
 test("market auto smoke runner creates transient Auth.js sessions without writing secret env files", () => {
@@ -43,6 +48,22 @@ test("market auto smoke runner creates transient Auth.js sessions without writin
   assert.match(source, /DIRECT_DATABASE_URL/);
   assert.doesNotMatch(source, /writeFileSync/);
   assert.doesNotMatch(source, /MARKET_SMOKE_USER_COOKIE=.*>/);
+});
+
+test("market escrow ASP registration script is idempotent and uses only escrow identity env", () => {
+  const source = readFileSync(join(root, "scripts", "register-market-escrow-asp.mjs"), "utf8");
+
+  assert.match(source, /export async function registerMarketEscrowAsp/);
+  assert.match(source, /prove\/register-asp-membership/);
+  assert.match(source, /ASP_MEMBERSHIP_ADMIN_SECRET/);
+  assert.match(source, /MARKET_ESCROW_BN254_PUBLIC_HEX/);
+  assert.match(source, /MARKET_ESCROW_MEMBERSHIP_BLINDING_HEX/);
+  assert.match(source, /alreadyMember === true/);
+  assert.match(source, /TransactionBuilder\.fromXDR/);
+  assert.match(source, /submitSignedXdr/);
+  assert.match(source, /waitForTransaction/);
+  assert.doesNotMatch(source, /MARKET_ESCROW_BN254_PRIVATE_HEX/);
+  assert.doesNotMatch(source, /MARKET_ESCROW_X25519_PRIVATE_HEX/);
 });
 
 test("market deployment runbook names the required env and live smoke flow", () => {
