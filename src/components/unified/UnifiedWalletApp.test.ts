@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const root = process.cwd();
@@ -124,6 +124,23 @@ test("contacts and requests wallet surfaces are wired into the unified app", () 
   assert.match(requestsSource, /useWalletRealtimeEvent/);
   assert.match(realtimeProviderSource, /new EventSource\("\/api\/wallet\/events"\)/);
   assert.match(realtimeProviderSource, /subscribe/);
+});
+
+test("contacts and requests dither image paths match deployed public assets exactly", () => {
+  const contactsSource = readSource("src/components/unified/ContactsTab.tsx");
+  const requestsSource = readSource("src/components/unified/RequestsTab.tsx");
+  const imagePaths = [...contactsSource.matchAll(/src="(\/images\/[^"]+)"/g)]
+    .concat([...requestsSource.matchAll(/src="(\/images\/[^"]+)"/g)])
+    .map((match) => match[1]);
+
+  assert.deepEqual(imagePaths.sort(), ["/images/Cash.png", "/images/Hands.png"]);
+  for (const imagePath of imagePaths) {
+    assert.equal(
+      existsSync(join(root, "public", imagePath)),
+      true,
+      `${imagePath} must exist with exact case for Linux deployment`,
+    );
+  }
 });
 
 test("requests payment flow excludes notes locked by active spend jobs", () => {

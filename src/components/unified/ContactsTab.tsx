@@ -252,7 +252,7 @@ export default function ContactsTab({ initialContacts }: { initialContacts?: Con
       {/* LEFT COLUMN: PURE DITHER CONTAINER (BORDERLESS) */}
       <div className="relative overflow-hidden rounded-3xl lg:h-full lg:max-h-full min-h-[300px]">
         <DitherShader
-          src="/images/hands.png"
+          src="/images/Hands.png"
           gridSize={2}
           pixelRatio={1}
           ditherMode="bayer"
