@@ -1,68 +1,82 @@
 <p align="center">
-  <img src="./public/Veil_Bg_Removed_Logo.png" alt="Veil logo" width="96" />
+  <img src="./public/Veil_Logo.png" alt="Veil private wallet" width="420" />
 </p>
 
-<h1 align="center">V E I L</h1>
+<h1 align="center">Private USDC Wallet</h1>
 
 <p align="center">
-  A private USDC wallet and prediction market built on Stellar testnet privacy pools.
+  Veil is a private payments and prediction market wallet built on Stellar testnet privacy pools.
 </p>
 
 <p align="center">
-  <img src="./public/Veil_Logo.png" alt="Veil wordmark" width="420" />
+  <strong>Next.js</strong> | <strong>Supabase</strong> | <strong>Google Auth</strong> | <strong>Stellar Testnet</strong>
 </p>
 
 ## Overview
 
-Veil is a Next.js application for private USDC payments, private note-to-note transfers, batch payouts, and private prediction markets. The frontend owns the authenticated product experience, encrypted wallet vault, portfolio surfaces, background spend-worker client, market admin console, and deployment checks for the Supabase-backed app state.
+This repository contains the Veil client application: the authenticated wallet interface, encrypted browser vault, private note portfolio, payment workflows, prediction market portfolio, realtime activity feed, notification system, and background spend-worker entrypoint.
 
-The app is designed around two privacy-pool lanes:
+Veil has two private USDC lanes:
 
-- **Wallet pool**: deposit public USDC into private notes, send privately, batch pay, receive notes, and withdraw.
-- **Market pool**: deposit public USDC into Market Notes, place private YES/NO market bets, receive private payouts, claim payout notes, and withdraw Market Notes back to the public wallet.
+| Lane | Purpose |
+| --- | --- |
+| Wallet notes | Deposit public USDC into private notes, send privately, batch pay recipients, receive notes, and withdraw back to the public wallet. |
+| Market notes | Deposit public USDC into market notes, place private YES/NO positions, receive private payouts, claim payout notes, and withdraw unused market notes. |
 
 The current deployment target is Stellar testnet.
 
-## Product Surface
+## Product Capabilities
 
-- **Google-authenticated wallet** with encrypted client-side vault unlock.
-- **Public wallet dashboard** for Stellar account, XLM, and USDC state.
-- **Private wallet dashboard** for shielded USDC notes, note sends, request payments, contacts, activity, and settings.
-- **Background batch worker** for larger private payout jobs with durable resume and reconciliation.
-- **Private prediction markets** at `/market` with portfolio, market detail, deposits, withdrawals, bets, payouts, and realtime notifications.
-- **Admin market console** at `/admin/markets`, restricted by Google email.
-- **Realtime UX** using wallet SSE events, notification inbox rows, coalesced refreshes, and bounded toasts.
+| Area | What it provides |
+| --- | --- |
+| Authentication | Google sign-in with an encrypted client-side vault unlock flow. |
+| Public wallet | Stellar account state, XLM balance, USDC trustline state, and public deposit readiness. |
+| Private wallet | Shielded USDC note cards, note-to-note transfers, private sends, withdrawals, requests, contacts, activity, and settings. |
+| Batch payments | Durable background execution for multi-recipient private payouts with resume and reconciliation support. |
+| Prediction markets | Private market deposits, YES/NO positions, market note balances, payout claims, and portfolio views. |
+| Realtime state | Server-sent wallet events, notification inbox rows, coalesced refreshes, and bounded toasts for long-running actions. |
 
-## Repository Layout
+## Architecture
+
+| Layer | Responsibility |
+| --- | --- |
+| Browser vault | Holds user wallet material after password unlock. Secrets are encrypted before storage. |
+| Next.js app | Renders wallet, market, activity, settings, and API routes. |
+| Supabase Postgres | Stores users, encrypted wallet records, note metadata, jobs, market records, notifications, and activity events. |
+| Spend worker | Processes queued background payment jobs through the same application codebase. |
+| Prover API | Builds deposit, withdraw, and transfer proofs from backend circuit artifacts. |
+| Relayer | Simulates, signs, and submits prepared pool transactions to Stellar. |
+
+## Repository Map
 
 ```text
 src/app/                       Next.js App Router pages and API routes
-src/components/                 Wallet, market, sidebar, header, and UI components
-src/lib/                        Client and server helpers
-src/lib/server/                 Database repositories, job engine, market logic
+src/components/                 Wallet, market, shell, header, and shared UI components
+src/lib/                        Client helpers and shared utilities
+src/lib/server/                 Server repositories, job engine, market logic, and notification helpers
 db/migrations/                  Supabase/Postgres schema migrations
-scripts/                        Migration, deploy, smoke, worker, and market tooling
-public/                         Veil logo and landing-page media assets
-MARKET_DEPLOYMENT.md            Market deployment and live smoke runbook
-railpack.json                   Railway/Railpack service config
+scripts/                        Migration, deployment, smoke, seed, and worker tooling
+public/                         Veil brand and landing media assets
+MARKET_DEPLOYMENT.md            Market deployment and smoke-test runbook
+railpack.json                   Railway/Railpack process configuration
 ```
 
 ## Prerequisites
 
 - Node.js 22
 - npm
-- Supabase Postgres database
-- Google OAuth application
+- Supabase Postgres
+- Google OAuth client
 - Running Veil backend services:
   - `prover-api`
   - `relayer`
-- Deployed Stellar testnet pool contracts from the backend repo
+- Deployed Stellar testnet contracts from `Veil.Server.v0`
 
 ## Environment
 
-Create `.env.local` for local development. Production variables are set in Railway.
+Create `.env.local` for local development. Production variables are configured in Railway.
 
-Required application and auth variables:
+Application and auth:
 
 ```bash
 NEXT_PUBLIC_APP_URL=http://localhost:3002
@@ -75,7 +89,7 @@ DATABASE_URL=...
 DIRECT_DATABASE_URL=...
 ```
 
-Required service and chain variables:
+Services and Stellar:
 
 ```bash
 PROVER_API_URL=http://127.0.0.1:3001
@@ -87,7 +101,7 @@ NEXT_PUBLIC_USDC_CONTRACT_ID=CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMX
 NEXT_PUBLIC_USDC_ISSUER=GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
 ```
 
-Current wallet pool configuration:
+Wallet pool:
 
 ```bash
 NEXT_PUBLIC_POOL_ID=CDEB3AIFRAGHGPLM24EDHHETSH4Y4L4NAYGSHHW7MQWXUQ65G7LEDBFY
@@ -96,7 +110,7 @@ NEXT_PUBLIC_POOL_DEPLOYMENT_LEDGER=3390591
 POOL_DEPLOYMENT_LEDGER=3390591
 ```
 
-Current market pool configuration:
+Market pool:
 
 ```bash
 MARKET_POOL_ID=veil_market_pool_v1
@@ -106,7 +120,7 @@ MARKET_POOL_DEPLOYMENT_LEDGER=3390595
 MARKET_POOL_TREE_DEPTH=10
 ```
 
-Required internal keys:
+Internal execution keys:
 
 ```bash
 INTERNAL_SERVICE_AUTH_TOKEN=...
@@ -141,15 +155,15 @@ Seed prediction markets:
 npm run db:seed:markets
 ```
 
-Run the frontend:
+Run the app:
 
 ```bash
 npm run dev
 ```
 
-The app runs on `http://localhost:3002`.
+The local client runs on `http://localhost:3002`.
 
-Run the spend worker locally when testing background batches:
+Run the background worker when testing queued private payments:
 
 ```bash
 npm run worker:spend
@@ -172,18 +186,18 @@ npm run db:check
 npm run deploy:check
 ```
 
-Market-specific tooling:
+Market smoke tooling:
 
 ```bash
 npm run proof:market:visual
 MARKET_SMOKE_CONFIRM_RESOLVE=demo-settlement-yes npm run smoke:live:market
 ```
 
-`deploy:check` verifies required env, Supabase schema, app readiness, prover health, and relayer health.
+`deploy:check` verifies required environment variables, Supabase schema state, app readiness, prover health, and relayer health.
 
 ## Deployment
 
-Railway uses `railpack.json` and starts the app through:
+Railway uses `railpack.json` and starts the repository through:
 
 ```bash
 npm run start
@@ -191,32 +205,36 @@ npm run start
 
 `scripts/railway-start.mjs` supports two process roles:
 
-- `VEIL_PROCESS=web`: runs `next start`.
-- `VEIL_PROCESS=worker`: runs `scripts/spend-worker.mjs`.
+| Role | Behavior |
+| --- | --- |
+| `VEIL_PROCESS=web` | Runs `next start`. |
+| `VEIL_PROCESS=worker` | Runs `scripts/spend-worker.mjs`. |
 
-The production deployment is split into:
+Recommended production services:
 
-- `veil-client`: web application.
-- `veil-worker`: background spend worker using the same client repository.
-- `veil-server`: backend prover and relayer service from the backend repository.
+| Service | Repository | Role |
+| --- | --- | --- |
+| `veil-client` | `Veil.Client.v0` | Web application |
+| `veil-worker` | `Veil.Client.v0` | Background spend worker |
+| `veil-server` | `Veil.Server.v0` | Prover API and relayer |
 
-Before deploying a fresh environment:
+Before deployment:
 
 1. Configure Supabase and Google OAuth.
 2. Configure Railway variables for the client and worker.
-3. Confirm backend `prover-api` and `relayer` are healthy.
+3. Confirm backend `prover-api` and `relayer` health.
 4. Run `npm run db:migrate`.
 5. Run `npm run db:seed:markets`.
 6. Run `npm run deploy:check`.
 7. Push to `main`.
 
-## Security And Privacy Notes
+## Security And Privacy
 
 - Wallet secret material is encrypted in the browser vault before storage.
-- Server-side tables store ciphertext and metadata, not cleartext wallet secrets.
-- Background spend packages are encrypted using `JOB_EXECUTION_ENCRYPTION_KEY`.
-- Pool privacy is scoped to the note pool. Public deposits and public withdrawals are visible on Stellar.
-- This is testnet software and should not be treated as audited production custody infrastructure.
+- Server tables store ciphertext and metadata, not cleartext wallet secrets.
+- Background spend packages are encrypted with `JOB_EXECUTION_ENCRYPTION_KEY`.
+- Pool privacy applies inside the note pool. Public deposits and public withdrawals remain visible on Stellar.
+- This is testnet software and should not be treated as audited custody infrastructure.
 
 ## Related Repositories
 
