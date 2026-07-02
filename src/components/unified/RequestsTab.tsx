@@ -13,7 +13,7 @@ import { useWalletRealtimeEvent } from "./WalletRealtimeProvider";
 
 const POOL_ID =
   process.env.NEXT_PUBLIC_POOL_ID ??
-  "CA2LFUXWJB73N3VKKLOMDNTXHTZ2WUF5KATU424WWKTTBDJZ6EJFJEM4";
+  "CDEB3AIFRAGHGPLM24EDHHETSH4Y4L4NAYGSHHW7MQWXUQ65G7LEDBFY";
 
 interface ContactView {
   id: string;
@@ -312,7 +312,7 @@ export default function RequestsTab({ wallet, initialContacts, initialRequests }
     let currentNote = startingNote;
     for (let guard = 0; guard < 100; guard += 1) {
       if (currentNote.leafIndex === null) throw new Error("Selected note is still indexing");
-      setMessage(`Proving Note-2-Note payment step ${guard + 1}...`);
+      setMessage(`Proving private payment step ${guard + 1}...`);
       const proved = await parseResponse<ProveResult>(
         await fetch(`/api/wallet/private/spend-jobs/${jobId}/advance`, {
           method: "POST",
@@ -331,7 +331,7 @@ export default function RequestsTab({ wallet, initialContacts, initialRequests }
         }),
       );
       const encryptedChange = await encryptPrivateNote(proved.result.changeNote, wallet);
-      setMessage(`Relaying Note-2-Note payment step ${proved.result.ordinal}...`);
+      setMessage(`Relaying private payment step ${proved.result.ordinal}...`);
       const submitted = await parseResponse<SubmitResult>(
         await fetch(`/api/wallet/private/spend-jobs/${jobId}/advance`, {
           method: "POST",
@@ -359,14 +359,14 @@ export default function RequestsTab({ wallet, initialContacts, initialRequests }
       return setError("This private note is already locked by an active payment job");
     }
     if (!request.requesterUserId || !request.requesterStellarPublicKey || !request.requesterBn254PublicHex || !request.requesterX25519PublicHex) {
-      return setError("Requester is missing registered Note-2-Note keys");
+      return setError("Requester is missing private receive keys");
     }
     if (BigInt(request.amountUnits) > BigInt(selectedNote.note.amountUnits)) {
       return setError("Selected note does not cover this request");
     }
     setProcessingRequestId(request.id);
     setError("");
-    setMessage("Creating Note-2-Note payment job...");
+    setMessage("Creating private payment job...");
     try {
       const created = await parseResponse<{ job: SpendJobView }>(
         await fetch("/api/wallet/private/spend-jobs", {
@@ -396,7 +396,7 @@ export default function RequestsTab({ wallet, initialContacts, initialRequests }
       );
       await runJobFromNote(created.job.job.id, selectedNote.note);
       await Promise.all([refresh(), loadNotes()]);
-      setMessage("Payment request paid with Note-2-Note.");
+      setMessage("Payment request paid privately.");
     } catch (err) {
       setError(String(err));
       setMessage("");
@@ -451,7 +451,7 @@ export default function RequestsTab({ wallet, initialContacts, initialRequests }
                       <span>Paying...</span>
                     </>
                   ) : (
-                    <span>Pay with Note-2-Note</span>
+                    <span>Pay privately</span>
                   )}
                 </button>
                 <button className={`${secondaryButton} transition-all active:scale-[0.98] h-9 px-4`} disabled={busy} onClick={() => void declineRequest(request.id)} type="button">

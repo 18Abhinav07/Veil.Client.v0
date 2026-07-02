@@ -189,7 +189,7 @@ export default function SettingsTab({
               <span className="font-medium text-red-700">{profileError}</span>
             ) : (
               <span className="text-stone-400">
-                {profileStatus || (profileHandle ? `Discoverable as @${profileHandle}` : "Used for Note-2-Note discovery.")}
+                {profileStatus || (profileHandle ? `Discoverable as @${profileHandle}` : "Used for private payments.")}
               </span>
             )}
           </p>

@@ -28,11 +28,14 @@ import {
   listUserMarketPortfolio,
   markMarketBetSubmitted,
   markMarketBetPrepared,
+  markMarketNotePendingWithdrawal,
   markMarketPayoutPrepared,
   markMarketPayoutSubmitted,
   openPredictionMarketDraft,
   recordMarketActivity,
+  releaseMarketNotePendingWithdrawal,
   resolveMarketAndCreateSettlement,
+  confirmMarketNoteWithdrawal,
   updatePredictionMarketDraft,
   upsertMarketSeeds,
   upsertMarketUserNote,
@@ -84,7 +87,7 @@ test("market repository writes every prediction-market table through parameteriz
   await ensureMarketPool(db, {
     poolId: "veil_market_pool_v1",
     contractId: null,
-    treeDepth: 15,
+    treeDepth: 10,
     deploymentLedger: 1,
     status: "planned",
   });
@@ -636,4 +639,46 @@ test("market payout claim only converts a confirmed committed payout into a spen
   assert.match(claimSql, /'unspent'/i);
   assert.match(claimSql, /'payout'/i);
   assert.match(claimSql, /on conflict \(user_id, pool_id, commitment_hex\) do update/i);
+});
+
+test("market note withdrawal locks releases and finalizes own spendable market notes", async () => {
+  const db = new RecordingDb();
+
+  await markMarketNotePendingWithdrawal(db, {
+    userId: "user-1",
+    noteId: "note-1",
+    poolId: "veil_market_pool_v1",
+    commitmentHex: "0xsource",
+    withdrawAmountUnits: "100",
+  });
+  await releaseMarketNotePendingWithdrawal(db, {
+    userId: "user-1",
+    noteId: "note-1",
+    commitmentHex: "0xsource",
+  });
+  await confirmMarketNoteWithdrawal(db, {
+    userId: "user-1",
+    noteId: "note-1",
+    poolId: "veil_market_pool_v1",
+    inputCommitmentHex: "0xsource",
+    withdrawAmountUnits: "100",
+    txHash: "tx-withdraw",
+    changeCommitmentHex: "0xchange",
+    changeAmountUnits: "25",
+    changeLeafIndex: 18,
+    encryptedChangeNoteCiphertext: "{\"version\":1}",
+  });
+
+  const combinedSql = db.queries.map((query) => query.text).join("\n");
+  assert.match(combinedSql, /update market_user_notes set[\s\S]+status = 'pending_withdraw'/i);
+  assert.match(combinedSql, /and status = 'unspent'/i);
+  assert.match(combinedSql, /amount_units >= \$5::numeric/i);
+  assert.match(combinedSql, /update market_user_notes set[\s\S]+status = 'unspent'/i);
+  assert.match(combinedSql, /and status = 'pending_withdraw'/i);
+  assert.match(combinedSql, /with spent_source as/i);
+  assert.match(combinedSql, /status = 'spent'/i);
+  assert.match(combinedSql, /and status in \('pending_withdraw', 'unspent'\)/i);
+  assert.match(combinedSql, /insert into market_user_notes/i);
+  assert.match(combinedSql, /'change'/i);
+  assert.match(combinedSql, /on conflict \(user_id, pool_id, commitment_hex\) do update/i);
 });

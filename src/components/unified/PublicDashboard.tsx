@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { formatStellarUnits, type PublicWalletState } from "@/lib/publicWalletCore";
 import { signStellarPayload } from "@/lib/walletSigner";
 import type { WalletSecrets } from "@/lib/vaultCrypto";
+import StatusToast from "./StatusToast";
 import { 
   ArrowUpRight, 
   Plus, 
@@ -98,6 +99,7 @@ export default function PublicDashboard({
   const [statusMsg, setStatusMsg] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const firstRefreshDoneRef = useRef(false);
 
   const busy = fundingFriendbot || enablingUsdc || swapping || sendingPayment || refreshing;
   const [hideBalance, setHideBalance] = useState(false);
@@ -212,17 +214,10 @@ export default function PublicDashboard({
   }, [initialMarketState]);
 
   useEffect(() => {
-    if (initialWalletState === undefined && initialMarketState === undefined) {
-      void refreshAll();
-      return;
-    }
-    if (initialWalletState === undefined) {
-      void refreshWallet();
-    }
-    if (initialMarketState === undefined || initialMarketState === null) {
-      void refreshMarket();
-    }
-  }, [initialMarketState, initialWalletState, refreshAll, refreshMarket, refreshWallet]);
+    if (firstRefreshDoneRef.current) return;
+    firstRefreshDoneRef.current = true;
+    void refreshAll();
+  }, [refreshAll]);
 
   const copyAddress = async () => {
     await navigator.clipboard.writeText(address);
@@ -649,34 +644,15 @@ export default function PublicDashboard({
           </div>
         </div>
 
-      {/* Dynamic Toast Alert (Floated, high z-index, non-blocking) */}
       {(statusMsg || errorMsg) && (
-        <div className="fixed bottom-6 right-6 z-50 max-w-sm rounded-2xl shadow-xl border p-4 bg-white/95 backdrop-blur-md animate-in fade-in slide-in-from-bottom-5 duration-300">
-          <div className="flex items-start gap-3">
-            <div className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-white ${
-              errorMsg ? "bg-red-650" : "bg-emerald-650"
-            }`}>
-              {errorMsg ? "!" : "✓"}
-            </div>
-            <div className="flex-1">
-              <p className={`text-xs font-bold ${errorMsg ? "text-red-950" : "text-emerald-950"}`}>
-                {errorMsg ? "System Alert" : "Process Update"}
-              </p>
-              <p className="mt-1 text-xs leading-5 text-stone-600">
-                {errorMsg || statusMsg}
-              </p>
-            </div>
-            <button
-              onClick={() => {
-                setErrorMsg("");
-                setStatusMsg("");
-              }}
-              className="text-stone-400 hover:text-stone-600 transition shrink-0 ml-1"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
+        <StatusToast
+          tone={errorMsg ? "error" : "success"}
+          message={errorMsg || statusMsg}
+          onDismiss={() => {
+            setErrorMsg("");
+            setStatusMsg("");
+          }}
+        />
       )}
       </div>
 

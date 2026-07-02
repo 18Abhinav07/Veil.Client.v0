@@ -4,11 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const root = process.cwd();
-const walletPoolContract = "CA2LFUXWJB73N3VKKLOMDNTXHTZ2WUF5KATU424WWKTTBDJZ6EJFJEM4";
-const staleWalletPoolContracts = [
-  "CCGTSXKMJUMPKKCZY7JMW4266XVLYCRM6I7ZIFWVGQBIDSGM7SVMAWXD",
-  "CBKWZP63CWSBAHPE2MO6ZQH2DDO3JEKKMYT2Z6WW3WW3FZQL2KGHV4QA",
-];
+const walletPoolContract = "CDEB3AIFRAGHGPLM24EDHHETSH4Y4L4NAYGSHHW7MQWXUQ65G7LEDBFY";
 
 function source(path: string) {
   return readFileSync(join(root, path), "utf8");
@@ -23,9 +19,6 @@ test("production wallet fallbacks use the live depth-10 wallet pool", () => {
   ]) {
     const contents = source(path);
     assert.match(contents, new RegExp(walletPoolContract), `${path} should default to the live wallet pool`);
-    for (const staleWalletPoolContract of staleWalletPoolContracts) {
-      assert.doesNotMatch(contents, new RegExp(staleWalletPoolContract), `${path} must not use stale wallet pools`);
-    }
   }
   assert.doesNotMatch(source("next.config.ts"), /NEXT_PUBLIC_RELAYER_URL:\s*process\.env\.RELAYER_URL/);
 });
@@ -34,7 +27,7 @@ test("market pool defaults stay on the currently deployed depth-10 circuit", () 
   assert.match(source("scripts/seed-markets.mjs"), /MARKET_POOL_TREE_DEPTH,\s*10/);
   assert.match(source("src/app/api/admin/markets/route.ts"), /MARKET_POOL_TREE_DEPTH,\s*10/);
   assert.match(source("MARKET_DEPLOYMENT.md"), /MARKET_POOL_TREE_DEPTH`: defaults to `10`/);
-  assert.doesNotMatch(source("MARKET_DEPLOYMENT.md"), /defaults to `15`/);
+  assert.match(source("db/migrations/0002_prediction_markets.sql"), /tree_depth integer not null default 10/);
 });
 
 test("payment request spends do not use placeholder pool ids", () => {

@@ -32,6 +32,7 @@ interface SpendJobStepView {
 interface SpendJobView {
   job: {
     id: string;
+    executionMode?: "interactive" | "background";
     status: string;
     sourceCommitmentHex: string;
     activeCommitmentHex: string;
@@ -148,22 +149,38 @@ function jobTone(status: string) {
   return "border-stone-200 bg-stone-50 text-stone-700";
 }
 
-function hasSubmittedStepToReconcile(job: SpendJobView) {
+function hasRecoverableStepToReconcile(job: SpendJobView) {
   return job.steps.some(
     (step) =>
       Boolean(step.txHash) &&
-      ["submitted", "relaying", "retry_wait", "needs_reconcile"].includes(step.status),
+      ["retry_wait", "needs_reconcile"].includes(step.status),
   );
 }
 
 function canReconcileSpendJob(job: SpendJobView) {
-  return job.job.status === "needs_reconcile" || hasSubmittedStepToReconcile(job);
+  return job.job.status === "needs_reconcile" && hasRecoverableStepToReconcile(job);
 }
 
 function hasProofReadyStepToResume(job: SpendJobView) {
   return (
     job.job.status === "running" &&
     job.steps.some((step) => step.status === "proof_ready" && !step.txHash)
+  );
+}
+
+function hasQueuedStepToResume(job: SpendJobView) {
+  return (
+    isInteractiveSpendJob(job) &&
+    ["queued", "running"].includes(job.job.status) &&
+    job.steps.some((step) => step.status === "queued" && !step.txHash)
+  );
+}
+
+function canResumeSpendJob(job: SpendJobView) {
+  return (
+    ["paused_needs_unlock", "waiting_retry", "failed_recoverable"].includes(job.job.status) ||
+    hasQueuedStepToResume(job) ||
+    hasProofReadyStepToResume(job)
   );
 }
 
@@ -242,6 +259,29 @@ const primaryButtonClass =
   "inline-flex h-10 items-center justify-center rounded-lg bg-stone-950 px-4 text-sm font-medium text-stone-50 transition hover:bg-stone-800 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-stone-300 disabled:text-stone-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-stone-900 focus-visible:ring-offset-2";
 const secondaryButtonClass =
   "inline-flex h-10 items-center justify-center rounded-lg border border-stone-200 bg-white px-4 text-sm font-medium text-stone-800 shadow-sm transition hover:border-stone-300 hover:bg-stone-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-stone-900 focus-visible:ring-offset-2";
+const MAX_INTERACTIVE_RECIPIENTS = 5;
+const PRIVATE_SPEND_UNLOAD_MESSAGE =
+  "Private transaction in progress. Please wait until the current private transfer finishes before refreshing.";
+
+function isInteractiveSpendJob(job: SpendJobView) {
+  return (
+    job.job.executionMode === "interactive" ||
+    (!job.job.executionMode && job.job.totalRecipients <= MAX_INTERACTIVE_RECIPIENTS)
+  );
+}
+
+function isInteractiveSpendJobInFlight(job: SpendJobView) {
+  return (
+    isInteractiveSpendJob(job) &&
+    job.job.status === "running" &&
+    job.job.completedCount < job.job.totalRecipients &&
+    job.steps.some((step) =>
+      ["queued", "proving", "proof_ready", "relaying", "submitted", "mined", "indexing", "stored"].includes(
+        step.status,
+      ),
+    )
+  );
+}
 
 export default function PrivateActivity({ wallet, initialJobs }: PrivateActivityProps) {
   const [jobs, setJobs] = useState<SpendJobView[]>(initialJobs ?? []);
@@ -255,14 +295,21 @@ export default function PrivateActivity({ wallet, initialJobs }: PrivateActivity
 
   const busy = refreshing || resumingJobId !== null || reconcilingJobId !== null;
 
-  const refreshJobs = useCallback(async () => {
+  const refreshJobs = useCallback(async (): Promise<SpendJobView[]> => {
     try {
       const data = await parseResponse<{ jobs: SpendJobView[] }>(
         await fetch("/api/wallet/private/spend-jobs", { cache: "no-store" }),
       );
       setJobs(data.jobs);
+      setError((current) =>
+        /No submitted step with encrypted change note|No runnable spend job step/.test(current)
+          ? ""
+          : current,
+      );
+      return data.jobs;
     } catch (err) {
       setError(String(err));
+      return [];
     }
   }, []);
 
@@ -335,6 +382,7 @@ export default function PrivateActivity({ wallet, initialJobs }: PrivateActivity
             body: JSON.stringify({
               intent: "submit",
               stepId: proved.result.stepId,
+              expectedOutputCommitmentHex: proved.result.changeNote.commitmentHex,
               encryptedChangeNoteCiphertext: JSON.stringify(encryptedChange),
             }),
           }),
@@ -363,14 +411,25 @@ export default function PrivateActivity({ wallet, initialJobs }: PrivateActivity
       setError("");
       setStatus("Loading active private note...");
       try {
+        const latestJobs = await refreshJobs();
+        const latestJob = latestJobs.find((item) => item.job.id === job.job.id) ?? job;
+        if (latestJob.job.status === "completed") {
+          setStatus("Payment job already completed.");
+          setExpandedJobId(null);
+          return;
+        }
+        if (!canResumeSpendJob(latestJob)) {
+          setStatus("Payment job is already running.");
+          return;
+        }
         const notes = await loadUnlockedNotes();
         const activeNote = notes.find(
-          (item) => item.note.commitmentHex === job.job.activeCommitmentHex,
+          (item) => item.note.commitmentHex === latestJob.job.activeCommitmentHex,
         );
         if (!activeNote) {
           throw new Error("Unlock or recover the active change note before resuming this job.");
         }
-        await runJobFromNote(job.job.id, activeNote.note);
+        await runJobFromNote(latestJob.job.id, activeNote.note);
         await refreshJobs();
         setExpandedJobId(null);
       } catch (err) {
@@ -390,8 +449,19 @@ export default function PrivateActivity({ wallet, initialJobs }: PrivateActivity
       setError("");
       setStatus("Reconciling submitted private payment...");
       try {
+        const latestJobs = await refreshJobs();
+        const latestJob = latestJobs.find((item) => item.job.id === job.job.id) ?? job;
+        if (latestJob.job.status === "completed") {
+          setStatus("Payment job already completed.");
+          setExpandedJobId(null);
+          return;
+        }
+        if (!canReconcileSpendJob(latestJob)) {
+          setStatus("Payment job is already progressing.");
+          return;
+        }
         await parseResponse<{ job: SpendJobView | null; reconciledStepId: string }>(
-          await fetch(`/api/wallet/private/spend-jobs/${job.job.id}/reconcile`, {
+          await fetch(`/api/wallet/private/spend-jobs/${latestJob.job.id}/reconcile`, {
             method: "POST",
           }),
         );
@@ -441,6 +511,22 @@ export default function PrivateActivity({ wallet, initialJobs }: PrivateActivity
       [scheduleJobsRefresh],
     ),
   );
+
+  const interruptedInteractiveJob = useMemo(
+    () => jobs.find(isInteractiveSpendJobInFlight) ?? null,
+    [jobs],
+  );
+
+  useEffect(() => {
+    if (!interruptedInteractiveJob) return;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = PRIVATE_SPEND_UNLOAD_MESSAGE;
+      return PRIVATE_SPEND_UNLOAD_MESSAGE;
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [interruptedInteractiveJob]);
 
   const handleJobDetails = (job: SpendJobView) => {
     setExpandedJobId((current) => (current === job.job.id ? null : job.job.id));
@@ -523,6 +609,25 @@ export default function PrivateActivity({ wallet, initialJobs }: PrivateActivity
           <span>{status}</span>
         </div>
       )}
+      {interruptedInteractiveJob && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-6 right-6 z-50 w-[calc(100vw-32px)] max-w-[min(420px,calc(100vw-32px))] rounded-xl border border-stone-200 bg-white/95 p-4 shadow-xl shadow-stone-950/10 backdrop-blur-md"
+        >
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-stone-100 text-stone-900 ring-1 ring-stone-200">
+              <Loader2 className="h-4 w-4 animate-spin" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-stone-950">Private transaction in progress</p>
+              <p className="mt-1 text-xs leading-5 text-stone-600">
+                Keep this tab open until the active private spend finishes. Refresh is blocked to avoid interrupting the local proof flow.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <section>
         {jobs.length === 0 ? (
@@ -561,9 +666,7 @@ function ExpandedActivityRow({
   reconcilingJobId: string | null;
 }) {
   const progress = jobProgress(job);
-  const canResume =
-    ["paused_needs_unlock", "waiting_retry", "failed_recoverable"].includes(job.job.status) ||
-    hasProofReadyStepToResume(job);
+  const canResume = canResumeSpendJob(job);
   const canReconcile = canReconcileSpendJob(job);
 
   return (

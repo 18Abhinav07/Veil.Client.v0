@@ -2,6 +2,21 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 
 import type { PrivateNoteSecrets } from "@/lib/noteCrypto";
 
+export interface BackgroundSpendPendingStep {
+  stepId: string;
+  sourceNoteId: string;
+  sourceCommitmentHex: string;
+  sourceAmountUnits: string;
+  sourceLeafIndex: number | null;
+  changeNote: PrivateNoteSecrets;
+  outputCommitmentHex: string;
+  outputAmountUnits: string;
+  recipientOutputCommitmentHex: string | null;
+  recipientEncryptedOutput: string | null;
+  relayStartLedger: number | null;
+  createdAt: number;
+}
+
 export interface BackgroundSpendExecutionPackage {
   version: 1;
   userId: string;
@@ -12,6 +27,7 @@ export interface BackgroundSpendExecutionPackage {
   senderEncryptionPublicHex: string;
   membershipBlindingHex: string;
   activeNote: PrivateNoteSecrets;
+  pendingStep?: BackgroundSpendPendingStep | null;
 }
 
 export interface EncryptedBackgroundExecutionPackage {

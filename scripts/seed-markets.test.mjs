@@ -13,14 +13,16 @@ test("market seed script provides default market rows and idempotent SQL", () =>
   const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   const source = readFileSync(join(root, "scripts", "seed-markets.mjs"), "utf8");
 
-  assert.ok(rows.length >= 5);
+  assert.ok(rows.length >= 13);
   assert.ok(rows.some((row) => row.slug === "btc-higher-after-21d"));
+  assert.ok(rows.some((row) => row.slug === "sol-higher-after-21d"));
+  assert.ok(rows.some((row) => row.slug === "fed-target-unchanged-next-30d"));
   for (const row of rows.filter((item) => !item.demoOnly)) {
     const daysOpen =
       (new Date(row.closesAt).getTime() - new Date("2026-06-30T12:00:00.000Z").getTime()) /
       (24 * 60 * 60 * 1000);
     assert.ok(daysOpen >= 14, `${row.slug} should stay open at least 14 days`);
-    assert.ok(daysOpen <= 21, `${row.slug} should stay open at most 21 days`);
+    assert.ok(daysOpen <= 30, `${row.slug} should stay open at most 30 days`);
   }
   assert.match(sql, /insert into market_pools/i);
   assert.match(sql, /insert into prediction_markets/i);

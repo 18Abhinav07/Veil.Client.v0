@@ -4,8 +4,10 @@ import { NextResponse } from "next/server";
 import { findNoteLeafIndex, waitForTransaction } from "@/lib/stellar";
 import { createAuthOptions } from "@/lib/server/auth";
 import { getPgPool } from "@/lib/server/db";
+import { getWalletServerEnv } from "@/lib/server/serverEnv";
 import {
   classifySpendJobError,
+  retryAfterFor,
   shouldReconcileSpendJobFailure,
   shouldRetrySpendJobFailure,
   type SpendJobErrorClass,
@@ -20,6 +22,7 @@ import {
   markSpendJobStepProofReady,
   markSpendJobStepRelaying,
   markSpendJobSubmitted,
+  resetProofReadySpendJobStepForReprove,
   storeSpendJobStepResult,
 } from "@/lib/server/walletRepository";
 import { serializeSpendJobDetail } from "@/lib/server/spendJobSerialization";
@@ -33,10 +36,11 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 800;
 
-const PROVER_API = process.env.PROVER_API_URL ?? "http://127.0.0.1:3001";
+const SERVER_ENV = getWalletServerEnv();
+const PROVER_API = SERVER_ENV.PROVER_API_URL ?? "http://127.0.0.1:3001";
 const RELAYER_URL =
-  process.env.RELAYER_URL ??
-  process.env.NEXT_PUBLIC_RELAYER_URL ??
+  SERVER_ENV.RELAYER_URL ??
+  SERVER_ENV.NEXT_PUBLIC_RELAYER_URL ??
   "http://127.0.0.1:3000";
 
 async function requireUserId() {
@@ -144,17 +148,6 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function retryAfterFor(errorClass: SpendJobErrorClass): Date | null {
-  if (
-    errorClass === "unknown" ||
-    errorClass === "already_spent_nullifier" ||
-    errorClass === "invalid_proof"
-  ) {
-    return null;
-  }
-  return new Date(Date.now() + 15_000);
-}
-
 async function markFailure(input: {
   userId: string;
   jobId: string;
@@ -196,7 +189,7 @@ async function markFailure(input: {
     stepId: input.stepId,
     errorClass,
     errorMessage: message,
-    retryAfter: retryable ? retryAfterFor(errorClass) : null,
+    retryAfter: retryable ? retryAfterFor(errorClass, input.attempts) : null,
   });
 }
 
@@ -228,13 +221,31 @@ async function handleProve(input: {
     return NextResponse.json({ error: "Missing spend material" }, { status: 400 });
   }
 
-  const runnable = await claimNextRunnableSpendJobStep(getPgPool(), {
+  let runnable = await claimNextRunnableSpendJobStep(getPgPool(), {
     userId: input.userId,
     jobId: input.jobId,
     sourceCommitmentHex: noteCommitmentHex,
     sourceAmountUnits: noteAmountUnits,
     sourceLeafIndex: noteLeafIndex,
   });
+  if (!runnable) {
+    const resetForReprove = await resetProofReadySpendJobStepForReprove(getPgPool(), {
+      userId: input.userId,
+      jobId: input.jobId,
+      sourceCommitmentHex: noteCommitmentHex,
+      sourceAmountUnits: noteAmountUnits,
+      sourceLeafIndex: noteLeafIndex,
+    });
+    if (resetForReprove) {
+      runnable = await claimNextRunnableSpendJobStep(getPgPool(), {
+        userId: input.userId,
+        jobId: input.jobId,
+        sourceCommitmentHex: noteCommitmentHex,
+        sourceAmountUnits: noteAmountUnits,
+        sourceLeafIndex: noteLeafIndex,
+      });
+    }
+  }
   if (!runnable) {
     return NextResponse.json(
       {
@@ -251,7 +262,7 @@ async function handleProve(input: {
       const recipientNotePublicHex = step.recipient_note_public_hex;
       const recipientX25519PublicHex = step.recipient_x25519_public_hex;
       if (!step.recipient_user_id || !recipientNotePublicHex || !recipientX25519PublicHex) {
-        throw new Error("Note-2-Note recipient registration data is missing");
+        throw new Error("Private recipient registration data is missing");
       }
 
       const proof = await proveTransfer({
@@ -384,6 +395,7 @@ async function handleSubmit(input: {
   const encryptedChangeNoteCiphertext = readString(
     input.payload.encryptedChangeNoteCiphertext,
   );
+  const expectedOutputCommitmentHex = readString(input.payload.expectedOutputCommitmentHex);
   if (!stepId) {
     return NextResponse.json(
       { error: "stepId is required" },
@@ -404,6 +416,15 @@ async function handleSubmit(input: {
   }
   if (!step.source_note_id) {
     return NextResponse.json({ error: "Spend job step has no source note" }, { status: 409 });
+  }
+  if (
+    expectedOutputCommitmentHex &&
+    expectedOutputCommitmentHex !== step.output_commitment_hex
+  ) {
+    return NextResponse.json(
+      { error: "Encrypted change note does not match the active proof" },
+      { status: 409 },
+    );
   }
 
   let txHash: string | null = null;

@@ -1,10 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  findPoolCommitmentEventFromEvents,
   getPoolEventConfig,
   isRetryableEventRangeError,
   parseEventLedgerRange,
 } from "./stellar";
+
+function commitmentTopic(hex: string) {
+  return Buffer.concat([Buffer.from([0, 0, 0, 0]), Buffer.from(hex, "hex")]).toString("base64");
+}
+
+function leafValue(index: number) {
+  const value = Buffer.alloc(8);
+  value.writeUInt32BE(index, 4);
+  return value.toString("base64");
+}
 
 test("classifies Soroban RPC event range lag as retryable", () => {
   assert.equal(
@@ -45,5 +56,40 @@ test("resolves market pool event config without mutating wallet pool defaults", 
       poolId: "CMARKETPOOL",
       deploymentLedger: 445566,
     },
+  );
+});
+
+test("extracts leaf index and tx hash from successful pool commitment events", () => {
+  const commitment = "a".repeat(64);
+  const ignored = "b".repeat(64);
+
+  assert.deepEqual(
+    findPoolCommitmentEventFromEvents(
+      [
+        {
+          topic: ["ignored", commitmentTopic(ignored)],
+          value: leafValue(7),
+          ledger: 3391000,
+          txHash: "tx-ignored",
+          inSuccessfulContractCall: true,
+        },
+        {
+          topic: ["failed", commitmentTopic(commitment)],
+          value: leafValue(8),
+          ledger: 3391001,
+          txHash: "tx-failed",
+          inSuccessfulContractCall: false,
+        },
+        {
+          topic: ["matched", commitmentTopic(commitment)],
+          value: leafValue(9),
+          ledger: 3391002,
+          txHash: "tx-matched",
+          inSuccessfulContractCall: true,
+        },
+      ],
+      commitment,
+    ),
+    { leafIndex: 9, ledger: 3391002, txHash: "tx-matched" },
   );
 });

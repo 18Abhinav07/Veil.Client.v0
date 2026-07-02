@@ -171,7 +171,10 @@ export function classifySpendJobError(error: unknown): SpendJobErrorClass {
   return "unknown";
 }
 
-function retryAfterFor(errorClass: SpendJobErrorClass): Date | null {
+const BASE_SPEND_JOB_RETRY_DELAY_MS = 15_000;
+export const MAX_SPEND_JOB_RETRY_DELAY_MS = 5 * 60_000;
+
+export function retryAfterFor(errorClass: SpendJobErrorClass, attempts = 0): Date | null {
   if (
     errorClass === "unknown" ||
     errorClass === "already_spent_nullifier" ||
@@ -179,10 +182,13 @@ function retryAfterFor(errorClass: SpendJobErrorClass): Date | null {
   ) {
     return null;
   }
-  return new Date(Date.now() + 15_000);
+  const retryIndex = Math.max(0, attempts - 1);
+  const delayMs = Math.min(
+    BASE_SPEND_JOB_RETRY_DELAY_MS * 2 ** Math.min(retryIndex, 5),
+    MAX_SPEND_JOB_RETRY_DELAY_MS,
+  );
+  return new Date(Date.now() + delayMs);
 }
-
-export const MAX_RETRYABLE_SPEND_ATTEMPTS = 3;
 
 export function shouldReconcileSpendJobFailure(input: {
   errorClass: SpendJobErrorClass;
@@ -197,8 +203,7 @@ export function shouldRetrySpendJobFailure(input: {
   submittedTxHash?: string | null;
 }): boolean {
   if (shouldReconcileSpendJobFailure(input)) return false;
-  if (!retryAfterFor(input.errorClass)) return false;
-  return input.attempts < MAX_RETRYABLE_SPEND_ATTEMPTS;
+  return retryAfterFor(input.errorClass, input.attempts) !== null;
 }
 
 function firstInputNullifier(result: WithdrawResponse): string | null {
@@ -334,7 +339,7 @@ export async function advanceSpendJob(
       errorMessage: submittedTxHash
         ? `${message} after tx submission ${submittedTxHash}`
         : message,
-      retryAfter: retryable ? retryAfterFor(errorClass) : null,
+      retryAfter: retryable ? retryAfterFor(errorClass, step.attempts ?? 0) : null,
     });
     throw error;
   }

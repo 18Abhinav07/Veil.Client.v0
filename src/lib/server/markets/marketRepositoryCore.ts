@@ -68,6 +68,7 @@ export interface MarketUserNoteRow {
     | "pending_deposit"
     | "unspent"
     | "pending_bet"
+    | "pending_withdraw"
     | "escrowed"
     | "spent"
     | "payout_pending"
@@ -274,7 +275,7 @@ export async function ensureMarketPool(db: QueryClient, input: {
     [
       input.poolId,
       input.contractId ?? null,
-      input.treeDepth ?? 15,
+      input.treeDepth ?? 10,
       input.deploymentLedger ?? 1,
       input.status ?? "planned",
       JSON.stringify(input.metadata ?? {}),
@@ -725,6 +726,137 @@ export async function createMarketBetIntent(db: QueryClient, input: {
     ],
   );
   return result.rows[0] ?? null;
+}
+
+export async function markMarketNotePendingWithdrawal(db: QueryClient, input: {
+  userId: string;
+  noteId: string;
+  poolId: string;
+  commitmentHex: string;
+  withdrawAmountUnits: string;
+}) {
+  assertPositiveUnits(input.withdrawAmountUnits, "withdrawAmountUnits");
+  const result = await db.query<MarketUserNoteRow>(
+    `update market_user_notes set
+       status = 'pending_withdraw',
+       updated_at = now()
+     where user_id = $1
+       and id = $2::uuid
+       and pool_id = $3
+       and commitment_hex = $4
+       and amount_units >= $5::numeric
+       and leaf_index is not null
+       and status = 'unspent'
+     returning *`,
+    [
+      input.userId,
+      input.noteId,
+      input.poolId,
+      input.commitmentHex,
+      input.withdrawAmountUnits,
+    ],
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function releaseMarketNotePendingWithdrawal(db: QueryClient, input: {
+  userId: string;
+  noteId: string;
+  commitmentHex: string;
+}) {
+  const result = await db.query<MarketUserNoteRow>(
+    `update market_user_notes set
+       status = 'unspent',
+       updated_at = now()
+     where user_id = $1
+       and id = $2::uuid
+       and commitment_hex = $3
+       and status = 'pending_withdraw'
+     returning *`,
+    [input.userId, input.noteId, input.commitmentHex],
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function confirmMarketNoteWithdrawal(db: QueryClient, input: {
+  userId: string;
+  noteId: string;
+  poolId: string;
+  inputCommitmentHex: string;
+  withdrawAmountUnits: string;
+  txHash: string;
+  changeCommitmentHex?: string | null;
+  changeAmountUnits?: string | null;
+  changeLeafIndex?: number | null;
+  encryptedChangeNoteCiphertext?: string | null;
+}) {
+  assertPositiveUnits(input.withdrawAmountUnits, "withdrawAmountUnits");
+  const changeAmountUnits = normalizeText(input.changeAmountUnits);
+  const hasChangeNote = Boolean(
+    normalizeText(input.changeCommitmentHex) &&
+      changeAmountUnits &&
+      BigInt(changeAmountUnits) > BigInt(0),
+  );
+  if (hasChangeNote && (!input.encryptedChangeNoteCiphertext || input.changeLeafIndex === null || input.changeLeafIndex === undefined)) {
+    throw new Error("Confirmed market withdrawal change requires encrypted note material and leaf index");
+  }
+
+  const result = await db.query<{
+    source_note: MarketUserNoteRow | null;
+    change_note: MarketUserNoteRow | null;
+  }>(
+    `with spent_source as (
+       update market_user_notes set
+         status = 'spent',
+         tx_hash = $5,
+         updated_at = now()
+       where user_id = $1
+         and id = $2::uuid
+         and pool_id = $3
+         and commitment_hex = $4
+         and amount_units >= $6::numeric
+         and status in ('pending_withdraw', 'unspent')
+       returning *
+     ),
+     inserted_change as (
+       insert into market_user_notes (
+         user_id, pool_id, commitment_hex, encrypted_note_ciphertext, asset_code,
+         amount_units, leaf_index, status, source, tx_hash
+       )
+       select
+         $1, $3, $7, $8, 'USDC',
+         $9::numeric, $10, 'unspent', 'change', $5
+       from spent_source
+       where nullif($7, '') is not null
+         and nullif($8, '') is not null
+         and nullif($9, '')::numeric > 0
+       on conflict (user_id, pool_id, commitment_hex) do update set
+         encrypted_note_ciphertext = excluded.encrypted_note_ciphertext,
+         amount_units = excluded.amount_units,
+         leaf_index = excluded.leaf_index,
+         status = 'unspent',
+         source = 'change',
+         tx_hash = excluded.tx_hash,
+         updated_at = now()
+       returning *
+     )
+     select
+       (select row_to_json(spent_source) from spent_source) as source_note,
+       (select row_to_json(inserted_change) from inserted_change) as change_note`,
+    [
+      input.userId,
+      input.noteId,
+      input.poolId,
+      input.inputCommitmentHex,
+      input.txHash,
+      input.withdrawAmountUnits,
+      input.changeCommitmentHex ?? "",
+      input.encryptedChangeNoteCiphertext ?? "",
+      changeAmountUnits ?? "",
+      input.changeLeafIndex ?? null,
+    ],
+  );
+  return result.rows[0] ?? { source_note: null, change_note: null };
 }
 
 export async function markMarketBetSubmitted(db: QueryClient, input: {

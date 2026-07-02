@@ -1,6 +1,7 @@
 "use client";
 
 import VaultGate from "@/components/VaultGate";
+import { WalletRealtimeProvider } from "@/components/unified/WalletRealtimeProvider";
 import type { WalletSecrets } from "@/lib/vaultCrypto";
 
 import MarketDetailPage from "./MarketDetailPage";
@@ -15,10 +16,14 @@ export default function MarketVaultShell({ accountEmail, slug }: MarketVaultShel
   return (
     <VaultGate>
       {(wallet: WalletSecrets) =>
-        slug ? (
-          <MarketDetailPage accountEmail={accountEmail} slug={slug} wallet={wallet} />
-        ) : (
-          <MarketsPage accountEmail={accountEmail} wallet={wallet} />
+        (
+          <WalletRealtimeProvider>
+            {slug ? (
+              <MarketDetailPage accountEmail={accountEmail} slug={slug} wallet={wallet} />
+            ) : (
+              <MarketsPage accountEmail={accountEmail} wallet={wallet} />
+            )}
+          </WalletRealtimeProvider>
         )
       }
     </VaultGate>

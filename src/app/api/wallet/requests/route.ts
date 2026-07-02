@@ -7,6 +7,7 @@ import {
   createPaymentRequest,
   createNotification,
   findAcceptedContactProfile,
+  formatUsdcUnits,
   listPaymentRequests,
   recordActivityEvent,
   type PaymentRequestViewRow,
@@ -135,7 +136,7 @@ export async function POST(request: Request) {
       entityKind: "payment_request",
       entityId: created.id,
       title: "Request sent",
-      body: `${amountUnits} USDC request is waiting for approval.`,
+      body: `${formatUsdcUnits(amountUnits)} request is waiting for approval.`,
       actionUrl: "/wallet?tab=requests",
     }),
     createNotification(db, {
@@ -146,7 +147,7 @@ export async function POST(request: Request) {
       entityKind: "payment_request",
       entityId: created.id,
       title: "Payment request received",
-      body: `${amountUnits} USDC request is ready to review.`,
+      body: `${formatUsdcUnits(amountUnits)} request is ready to review.`,
       actionUrl: "/wallet?tab=requests",
     }),
   ]);

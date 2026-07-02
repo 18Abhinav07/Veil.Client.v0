@@ -98,6 +98,7 @@ test("prediction market migration creates isolated market pool, note, bet, resol
   assert.match(sql, /alter table market_user_notes drop constraint if exists market_user_notes_status_check/i);
   assert.match(sql, /alter table market_user_notes add constraint market_user_notes_status_check/i);
   assert.match(sql, /'pending_deposit'/i);
+  assert.match(sql, /'pending_withdraw'/i);
 });
 
 test("wallet v2 migration stores ciphertext and metadata, not cleartext wallet secrets", () => {

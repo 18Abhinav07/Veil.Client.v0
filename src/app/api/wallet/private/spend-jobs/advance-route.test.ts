@@ -59,6 +59,46 @@ test("server-side relay callers default to loopback IPv4 instead of ambiguous lo
   assert.doesNotMatch(bulkWithdrawRoute, /http:\/\/localhost:3000/);
 });
 
+test("spend job runners use shared server env fallback for prover relayer and worker keys", () => {
+  const advanceRoute = readFileSync(
+    join(
+      root,
+      "src",
+      "app",
+      "api",
+      "wallet",
+      "private",
+      "spend-jobs",
+      "[jobId]",
+      "advance",
+      "route.ts",
+    ),
+    "utf8",
+  );
+  const workerRoute = readFileSync(
+    join(
+      root,
+      "src",
+      "app",
+      "api",
+      "internal",
+      "spend-worker",
+      "tick",
+      "route.ts",
+    ),
+    "utf8",
+  );
+
+  for (const source of [advanceRoute, workerRoute]) {
+    assert.match(source, /getWalletServerEnv/);
+    assert.match(source, /const SERVER_ENV = getWalletServerEnv\(\)/);
+    assert.doesNotMatch(source, /const PROVER_API = process\.env\.PROVER_API_URL/);
+    assert.doesNotMatch(source, /process\.env\.RELAYER_URL/);
+  }
+  assert.match(workerRoute, /SERVER_ENV\.JOB_EXECUTION_ENCRYPTION_KEY/);
+  assert.doesNotMatch(workerRoute, /process\.env\.JOB_EXECUTION_ENCRYPTION_KEY/);
+});
+
 test("spend job advance route uses persisted attempt counts for retry decisions", () => {
   const source = readFileSync(
     join(
@@ -79,6 +119,48 @@ test("spend job advance route uses persisted attempt counts for retry decisions"
   assert.match(source, /attempts:\s*number/);
   assert.match(source, /attempts:\s*step\.attempts\s*\?\?\s*0/);
   assert.doesNotMatch(source, /attempts:\s*0,/);
+});
+
+test("spend job advance route can re-prove a lost proof-ready interactive step", () => {
+  const source = readFileSync(
+    join(
+      root,
+      "src",
+      "app",
+      "api",
+      "wallet",
+      "private",
+      "spend-jobs",
+      "[jobId]",
+      "advance",
+      "route.ts",
+    ),
+    "utf8",
+  );
+
+  assert.match(source, /resetProofReadySpendJobStepForReprove/);
+  assert.match(source, /claimNextRunnableSpendJobStep[\s\S]*resetProofReadySpendJobStepForReprove[\s\S]*claimNextRunnableSpendJobStep/);
+});
+
+test("spend job submit route validates encrypted change note against the active proof", () => {
+  const source = readFileSync(
+    join(
+      root,
+      "src",
+      "app",
+      "api",
+      "wallet",
+      "private",
+      "spend-jobs",
+      "[jobId]",
+      "advance",
+      "route.ts",
+    ),
+    "utf8",
+  );
+
+  assert.match(source, /expectedOutputCommitmentHex/);
+  assert.match(source, /Encrypted change note does not match the active proof/);
 });
 
 test("reconcile route stores Lane 2 recipient output after submitted transaction recovery", () => {
@@ -103,4 +185,25 @@ test("reconcile route stores Lane 2 recipient output after submitted transaction
   assert.match(source, /step\.recipient_encrypted_output/);
   assert.match(source, /recipientNote:/);
   assert.match(source, /recipientUserId: step\.recipient_user_id/);
+});
+
+test("reconcile route treats already-completed jobs as idempotent success", () => {
+  const source = readFileSync(
+    join(
+      root,
+      "src",
+      "app",
+      "api",
+      "wallet",
+      "private",
+      "spend-jobs",
+      "[jobId]",
+      "reconcile",
+      "route.ts",
+    ),
+    "utf8",
+  );
+
+  assert.match(source, /alreadyComplete/);
+  assert.match(source, /serializedDetail\.job\.status === "completed"/);
 });

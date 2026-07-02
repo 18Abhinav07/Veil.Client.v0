@@ -36,7 +36,7 @@ test("prediction markets live on standalone /market page without touching wallet
   assert.match(marketsSource, /market-probability-bar/);
   assert.match(marketsSource, /yesProbabilityBps/);
   assert.match(marketsSource, /noProbabilityBps/);
-  assert.match(marketsSource, /Private market pool/);
+  assert.match(marketsSource, /Spendable private balance/);
   assert.match(marketsSource, /\/api\/markets/);
   assert.match(marketsSource, /Market Notes/);
   assert.match(marketsSource, /Public Wallet/);
@@ -75,7 +75,9 @@ test("prediction markets live on standalone /market page without touching wallet
   assert.doesNotMatch(marketsSource, /grid-cols-\[minmax\(220px,1fr\)_88px_88px_110px\]/);
   assert.doesNotMatch(marketsSource, /violet-/);
   assert.doesNotMatch(marketsSource, /bg-stone-950 p-5 text-white/);
-  assert.match(marketsSource, /Market pool contract pending/);
+  assert.match(marketsSource, /Trading setup pending/);
+  assert.doesNotMatch(marketsSource, /Private market pool/);
+  assert.doesNotMatch(marketsSource, /Market pool contract pending/);
   assert.match(marketsSource, /MarketsSkeleton/);
   assert.doesNotMatch(marketsSource, /@\/lib\/server/);
 });
@@ -135,13 +137,25 @@ test("market portfolio uses wallet-style left tabs with a minimal right deposit 
 
   assert.match(marketsSource, /portfolio-workspace/);
   assert.match(marketsSource, /market-deposit-panel/);
+  assert.match(marketsSource, /market-note-action-card/);
+  assert.match(marketsSource, /portfolio-table-card/);
   assert.match(marketsSource, /lg:grid-cols-\[minmax\(0,1fr\)_360px\]/);
-  assert.match(marketsSource, /border-b border-stone-200 bg-transparent/);
+  assert.match(marketsSource, /rounded-3xl bg-white p-5 shadow-sm ring-1 ring-stone-100/);
   assert.match(marketsSource, /rounded-full bg-stone-100\/60 p-1/);
   assert.match(marketsSource, /Deposit to Market Notes/);
+  assert.match(marketsSource, /Withdraw to Public Wallet/);
+  assert.match(marketsSource, /marketNoteActionTab/);
+  assert.match(marketsSource, /setMarketNoteActionTab/);
+  assert.match(marketsSource, /\[\"deposit\", \"withdraw\"\] as const/);
+  assert.match(marketsSource, /selectedWithdrawNoteId/);
+  assert.match(marketsSource, /withdrawAmount/);
+  assert.match(marketsSource, /handleMarketWithdraw/);
+  assert.match(marketsSource, /\/api\/markets\/withdrawals/);
+  assert.match(marketsSource, /withdrawDisabled/);
   assert.match(marketsSource, /Public wallet/);
   assert.match(marketsSource, /USD Coin/);
   assert.match(marketsSource, /Stellar Lumens/);
+  assert.doesNotMatch(marketsSource, /market-withdraw-panel/);
   assert.doesNotMatch(marketsSource, /Universal deposit/);
   assert.doesNotMatch(marketsSource, /Use the universal deposit above/);
 });
@@ -177,7 +191,7 @@ test("market detail uses left detail tabs and one wallet-style action rail", () 
   assert.match(detailSource, /grid-cols-5/);
   assert.match(detailSource, /lg:grid-cols-\[minmax\(0,1fr\)_390px\]/);
   assert.match(detailSource, /market-action-panel/);
-  assert.match(detailSource, /border-b border-stone-200 bg-transparent/);
+  assert.match(detailSource, /scroll-mt-5 rounded-3xl bg-white p-5 shadow-sm ring-1 ring-stone-100/);
   assert.match(detailSource, /rounded-full bg-stone-100\/60 p-1/);
   assert.match(detailSource, /Overview/);
   assert.match(detailSource, /Rules/);
@@ -225,6 +239,37 @@ test("market pages use the encrypted vault before deposit or bet actions", () =>
   assert.match(detailSource, /decryptPrivateNote/);
 });
 
+test("market pages reuse wallet realtime and notification state without polling", () => {
+  const marketShellSource = readSource("src/components/markets/MarketVaultShell.tsx");
+  const marketsSource = readSource("src/components/markets/MarketsPage.tsx");
+  const detailSource = readSource("src/components/markets/MarketDetailPage.tsx");
+  const headerSource = readSource("src/components/unified/TopHeader.tsx");
+
+  assert.match(marketShellSource, /WalletRealtimeProvider/);
+  assert.match(marketShellSource, /<WalletRealtimeProvider>/);
+  assert.match(marketsSource, /useWalletRealtimeEvent/);
+  assert.match(detailSource, /useWalletRealtimeEvent/);
+  assert.match(marketsSource, /marketRefreshTimer/);
+  assert.match(detailSource, /marketRefreshTimer/);
+  assert.match(marketsSource, /scheduleMarketRefresh/);
+  assert.match(detailSource, /scheduleMarketRefresh/);
+  assert.match(marketsSource, /document\.addEventListener\("visibilitychange"/);
+  assert.match(detailSource, /document\.addEventListener\("visibilitychange"/);
+  assert.doesNotMatch(marketsSource, /setInterval/);
+  assert.doesNotMatch(detailSource, /setInterval/);
+  assert.match(marketsSource, /initialNotifications=\{notifications\}/);
+  assert.match(detailSource, /initialNotifications=\{notifications\}/);
+  assert.match(marketsSource, /notificationUnreadCount=\{notificationUnreadCount\}/);
+  assert.match(detailSource, /notificationUnreadCount=\{notificationUnreadCount\}/);
+  assert.doesNotMatch(marketsSource, /initialNotifications=\{\[\]\}/);
+  assert.doesNotMatch(detailSource, /initialNotifications=\{\[\]\}/);
+  assert.match(headerSource, /"market_deposit_confirmed"/);
+  assert.match(headerSource, /"market_bet_confirmed"/);
+  assert.match(headerSource, /"market_payout_ready"/);
+  assert.match(headerSource, /"market_payout_claimed"/);
+  assert.match(headerSource, /"market_payout_failed"/);
+});
+
 test("market bet submit transfers the selected note into escrow and stores any change note", () => {
   const marketListSource = readSource("src/components/markets/MarketsPage.tsx");
   const detailSource = readSource("src/components/markets/MarketDetailPage.tsx");
@@ -242,18 +287,51 @@ test("market bet submit transfers the selected note into escrow and stores any c
   assert.match(detailSource, /Market bet confirmed/i);
   assert.match(detailSource, /activeMarketBetStatuses/);
   assert.match(detailSource, /\[\.\.\.activeMarketBetStatuses\]\.includes\(bet\.status\)/);
+  assert.match(detailSource, /normalizeMarketUserNoteSecrets/);
+  assert.match(detailSource, /leafIndex: note\.leafIndex \?\? secrets\.leafIndex/);
+  assert.match(detailSource, /const sourceNote = normalizeMarketUserNoteSecrets/);
   assert.doesNotMatch(detailSource, /On-chain market escrow is still pending/);
   assert.doesNotMatch(marketListSource, /On-chain market escrow is still pending/);
 });
 
-test("market detail page exposes payout claim states without mixing them into main wallet notes", () => {
+test("market portfolio owns payout claiming while detail stays informational", () => {
+  const marketsSource = readSource("src/components/markets/MarketsPage.tsx");
+  const detailSource = readSource("src/components/markets/MarketDetailPage.tsx");
+  const outputNoteSource = readSource("src/lib/marketOutputNoteClient.ts");
+
+  assert.match(marketsSource, /claimMarketPayout/);
+  assert.match(marketsSource, /\/api\/markets\/payouts\/\$\{encodeURIComponent\(payout\.id\)\}\/claim/);
+  assert.match(marketsSource, /decryptMarketOutputNote/);
+  assert.match(marketsSource, /encryptPrivateNote/);
+  assert.match(outputNoteSource, /\/api\/wallet\/keys\/decrypt-output-note/);
+  assert.match(outputNoteSource, /walletX25519PrivateHex/);
+  assert.match(outputNoteSource, /encryptedOutputKind !== "spp-x25519-output-note"/);
+  assert.match(marketsSource, /payoutCommitmentHex/);
+  assert.match(marketsSource, /encryptedNoteCiphertext/);
+  assert.match(marketsSource, /leafIndex: number \| null/);
+  assert.match(marketsSource, /Claim payout/);
+  assert.match(marketsSource, /payout\.status === "confirmed"/);
+  assert.match(marketsSource, /Boolean\(payout\.payoutCommitmentHex\)/);
+  assert.match(marketsSource, /source: "payout"/);
+  assert.match(marketsSource, /status: "unspent"/);
+  assert.doesNotMatch(detailSource, /claimMarketPayout/);
+  assert.doesNotMatch(detailSource, /\/api\/markets\/payouts\/\$\{encodeURIComponent\(payout\.id\)\}\/claim/);
+  assert.doesNotMatch(detailSource, /Claim payout/);
+  assert.match(detailSource, /href="\/market\?view=portfolio&tab=payouts"/);
+  assert.match(detailSource, /Payouts/);
+  assert.match(detailSource, /decryptMarketUserNote/);
+  assert.match(detailSource, /decryptMarketOutputNote/);
+  assert.doesNotMatch(detailSource, /\/api\/wallet\/notes/);
+});
+
+test("market pages use the shared bounded toast component", () => {
+  const marketsSource = readSource("src/components/markets/MarketsPage.tsx");
   const detailSource = readSource("src/components/markets/MarketDetailPage.tsx");
 
-  assert.match(detailSource, /claimMarketPayout/);
-  assert.match(detailSource, /\/api\/markets\/payouts\/\$\{encodeURIComponent\(payout\.id\)\}\/claim/);
-  assert.match(detailSource, /Claim payout/);
-  assert.match(detailSource, /Payouts/);
-  assert.match(detailSource, /source: "payout"/);
-  assert.match(detailSource, /status: "unspent"/);
-  assert.doesNotMatch(detailSource, /\/api\/wallet\/notes/);
+  assert.match(marketsSource, /StatusToast/);
+  assert.match(detailSource, /StatusToast/);
+  assert.match(marketsSource, /tone=\{error \? "error" : "success"\}/);
+  assert.match(detailSource, /tone=\{error \? "error" : "success"\}/);
+  assert.doesNotMatch(marketsSource, /System Alert/);
+  assert.doesNotMatch(detailSource, /System Alert/);
 });

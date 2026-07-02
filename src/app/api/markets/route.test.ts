@@ -15,6 +15,7 @@ test("market APIs expose authenticated list, detail, intent, and confirmation ro
     "src/app/api/markets/[slug]/route.ts",
     "src/app/api/markets/[slug]/bets/route.ts",
     "src/app/api/markets/deposits/route.ts",
+    "src/app/api/markets/withdrawals/route.ts",
     "src/app/api/markets/payouts/[payoutId]/claim/route.ts",
   ]) {
     assert.equal(existsSync(join(root, path)), true);
@@ -24,32 +25,80 @@ test("market APIs expose authenticated list, detail, intent, and confirmation ro
   const detailSource = readSource("src/app/api/markets/[slug]/route.ts");
   const betSource = readSource("src/app/api/markets/[slug]/bets/route.ts");
   const depositSource = readSource("src/app/api/markets/deposits/route.ts");
+  const withdrawalSource = readSource("src/app/api/markets/withdrawals/route.ts");
   const claimSource = readSource("src/app/api/markets/payouts/[payoutId]/claim/route.ts");
 
   assert.match(listSource, /getServerSession/);
   assert.match(listSource, /listMarkets/);
   assert.match(listSource, /listUserMarketPortfolio/);
+  assert.match(listSource, /listNotifications/);
+  assert.match(listSource, /getWalletBadgeCounts/);
+  assert.match(listSource, /serializeNotification/);
   assert.match(listSource, /includeDemo = false/);
   assert.doesNotMatch(listSource, /NODE_ENV !== "production"/);
   assert.doesNotMatch(listSource, /NEXT_PUBLIC_SHOW_DEMO_MARKETS/);
   assert.match(detailSource, /getMarketBySlug/);
+  assert.match(detailSource, /listNotifications/);
+  assert.match(detailSource, /getWalletBadgeCounts/);
+  assert.match(detailSource, /serializeNotification/);
   assert.match(detailSource, /includeDemo: false/);
   assert.match(detailSource, /Market not found/);
   assert.match(betSource, /createMarketBetIntent/);
   assert.match(betSource, /confirmMarketBet/);
+  assert.match(betSource, /emitMarketUserNotification/);
   assert.match(betSource, /proof_ready/);
   assert.match(betSource, /submitted/);
   assert.match(depositSource, /getServerSession/);
   assert.match(depositSource, /createMarketDepositNote/);
+  assert.match(depositSource, /emitMarketUserNotification/);
   assert.match(depositSource, /serializeMarketUserNote/);
   assert.match(depositSource, /market_deposit_recorded/);
-  assert.match(depositSource, /Market pool is not active/);
+  assert.match(depositSource, /market_deposit_confirmed/);
+  assert.match(depositSource, /Market setup is not active/);
+  assert.match(withdrawalSource, /getServerSession/);
+  assert.match(withdrawalSource, /prepareWithdrawal/);
+  assert.match(withdrawalSource, /submitWithdrawal/);
+  assert.match(withdrawalSource, /finalizeWithdrawal/);
+  assert.match(withdrawalSource, /getWalletProfileByUserId/);
+  assert.match(withdrawalSource, /markMarketNotePendingWithdrawal/);
+  assert.match(withdrawalSource, /releaseMarketNotePendingWithdrawal/);
+  assert.match(withdrawalSource, /confirmMarketNoteWithdrawal/);
+  assert.match(withdrawalSource, /emitMarketUserNotification/);
+  assert.match(withdrawalSource, /market_withdraw_confirmed/);
   assert.match(claimSource, /getServerSession/);
   assert.match(claimSource, /claimMarketPayoutNote/);
+  assert.match(claimSource, /emitMarketUserNotification/);
   assert.match(claimSource, /serializeMarketPayout/);
   assert.match(claimSource, /serializeMarketUserNote/);
   assert.match(claimSource, /market_payout_claimed/);
-  assert.doesNotMatch(claimSource, /amountUnits/);
+  assert.doesNotMatch(claimSource, /payload\.amountUnits/);
+});
+
+test("market withdrawal API withdraws only own-wallet market notes through server-side market pool config", () => {
+  const withdrawalSource = readSource("src/app/api/markets/withdrawals/route.ts");
+
+  assert.match(withdrawalSource, /intent: "prepare"/);
+  assert.match(withdrawalSource, /intent: "submit"/);
+  assert.match(withdrawalSource, /intent: "finalize"/);
+  assert.match(withdrawalSource, /MARKET_POOL_ID/);
+  assert.match(withdrawalSource, /getWalletServerEnv/);
+  assert.match(withdrawalSource, /MARKET_POOL_CONTRACT_ID|NEXT_PUBLIC_MARKET_POOL_CONTRACT_ID/);
+  assert.match(withdrawalSource, /MARKET_POOL_DEPLOYMENT_LEDGER/);
+  assert.match(withdrawalSource, /prove\/withdraw/);
+  assert.match(withdrawalSource, /getInternalServiceHeaders/);
+  assert.match(withdrawalSource, /fetchJsonWithRetry/);
+  assert.match(withdrawalSource, /prover-api \/prove\/withdraw/);
+  assert.match(withdrawalSource, /RELAYER_URL/);
+  assert.match(withdrawalSource, /\/relay/);
+  assert.match(withdrawalSource, /waitForTransaction/);
+  assert.match(withdrawalSource, /findNoteLeafIndexInPool/);
+  assert.match(withdrawalSource, /recipientStellarAddress: profile\.stellar_public_key/);
+  assert.match(withdrawalSource, /poolId: marketPool\.contractId/);
+  assert.match(withdrawalSource, /indexingStatus/);
+  assert.match(withdrawalSource, /pending_index/);
+  assert.match(withdrawalSource, /status: 202/);
+  assert.doesNotMatch(withdrawalSource, /payload\.poolId/);
+  assert.doesNotMatch(withdrawalSource, /\bstellarSecretKey\b/);
 });
 
 test("market deposit API prepares submits finalizes and stores notes against isolated market pool config", () => {
@@ -179,6 +228,9 @@ test("market admin APIs are restricted and can seed and resolve markets", () => 
   assert.match(payoutSource, /\/relay/);
   assert.match(payoutSource, /waitForTransaction/);
   assert.match(payoutSource, /findNoteLeafIndexInPool/);
+  assert.match(payoutSource, /findPoolCommitmentEventInPool/);
+  assert.match(payoutSource, /recoverPreparedPayoutSubmission/);
+  assert.match(payoutSource, /recoverPreparedConsolidationSubmission/);
   assert.match(payoutSource, /encryptedPayoutNoteCiphertext/);
   assert.match(payoutSource, /inputNotes/);
   assert.match(payoutSource, /consolidatedCount/);
@@ -187,6 +239,20 @@ test("market admin APIs are restricted and can seed and resolve markets", () => 
   assert.match(payoutSource, /delayMs:\s*5000/);
   assert.match(payoutSource, /status: "submitted"/);
   assert.match(payoutSource, /finalizeSubmittedPayout/);
+  assert.match(payoutSource, /emitMarketPayoutReadyNotification/);
+  assert.match(payoutSource, /emitMarketPayoutFailedNotification/);
   assert.doesNotMatch(payoutSource, /executeMarketPayoutBatch/);
   assert.doesNotMatch(payoutSource, /readString\(payload\.txHash\)/);
+});
+
+test("market APIs return notification bootstrap state with market payloads", () => {
+  const listSource = readSource("src/app/api/markets/route.ts");
+  const detailSource = readSource("src/app/api/markets/[slug]/route.ts");
+
+  for (const source of [listSource, detailSource]) {
+    assert.match(source, /notifications: notifications\.map\(serializeNotification\)/);
+    assert.match(source, /notificationUnreadCount: badges\.unreadNotifications/);
+    assert.match(source, /listNotifications\(db, \{ userId: auth\.userId, unreadOnly: false, limit: 20 \}\)/);
+    assert.match(source, /getWalletBadgeCounts\(db, \{ userId: auth\.userId \}\)/);
+  }
 });

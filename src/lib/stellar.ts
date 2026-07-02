@@ -3,14 +3,28 @@ const USDC_DECIMALS = 7;
 
 const POOL_ID =
   process.env.NEXT_PUBLIC_POOL_ID ??
-  "CA2LFUXWJB73N3VKKLOMDNTXHTZ2WUF5KATU424WWKTTBDJZ6EJFJEM4";
+  "CDEB3AIFRAGHGPLM24EDHHETSH4Y4L4NAYGSHHW7MQWXUQ65G7LEDBFY";
 const POOL_DEPLOYMENT_LEDGER = Number(
-  process.env.NEXT_PUBLIC_POOL_DEPLOYMENT_LEDGER ?? "3381563",
+  process.env.NEXT_PUBLIC_POOL_DEPLOYMENT_LEDGER ?? "3390591",
 );
 
 export interface PoolEventConfig {
   poolId: string;
   deploymentLedger: number;
+}
+
+export interface PoolCommitmentEvent {
+  leafIndex: number;
+  ledger: number;
+  txHash: string;
+}
+
+interface RawPoolEvent {
+  topic: string[];
+  value: string;
+  ledger: number;
+  txHash?: string;
+  inSuccessfulContractCall?: boolean;
 }
 
 export function getPoolEventConfig(config: Partial<PoolEventConfig> = {}): PoolEventConfig {
@@ -29,6 +43,15 @@ async function rpc(method: string, params: unknown) {
   const json = await res.json();
   if (json.error) throw new Error(JSON.stringify(json.error));
   return json.result;
+}
+
+export async function getLatestLedgerSequence(): Promise<number> {
+  const result = await rpc("getLatestLedger", {});
+  const sequence = Number(result?.sequence);
+  if (!Number.isFinite(sequence)) {
+    throw new Error("No latest ledger sequence in getLatestLedger response");
+  }
+  return sequence;
 }
 
 export function formatUsdc(units: string | number): string {
@@ -122,6 +145,15 @@ export async function findNoteLeafIndexInPool(
   startLedger = Math.max(1, POOL_DEPLOYMENT_LEDGER),
   options: { timeoutMs?: number; pool?: Partial<PoolEventConfig> } = {},
 ): Promise<number> {
+  const event = await findPoolCommitmentEventInPool(commitmentHex, startLedger, options);
+  return event.leafIndex;
+}
+
+export async function findPoolCommitmentEventInPool(
+  commitmentHex: string,
+  startLedger = Math.max(1, POOL_DEPLOYMENT_LEDGER),
+  options: { timeoutMs?: number; pool?: Partial<PoolEventConfig> } = {},
+): Promise<PoolCommitmentEvent> {
   const target = commitmentHex.replace(/^0x/, "").toLowerCase();
   const timeoutMs = options.timeoutMs ?? 120_000;
   const pool = getPoolEventConfig(options.pool);
@@ -159,12 +191,11 @@ export async function findNoteLeafIndexInPool(
 
     lastLatestLedger =
       typeof result?.latestLedger === "number" ? result.latestLedger : lastLatestLedger;
-    const events: Array<{ topic: string[]; value: string; ledger: number }> =
-      result?.events ?? [];
+    const events: RawPoolEvent[] = result?.events ?? [];
 
-    const leafIndex = findLeafIndexInEvents(events, target);
-    if (leafIndex !== null) {
-      return leafIndex;
+    const event = findPoolCommitmentEventFromEvents(events, target);
+    if (event !== null) {
+      return event;
     }
 
     const nextCursor = typeof result?.cursor === "string" ? result.cursor : "";
@@ -188,11 +219,13 @@ export async function findNoteLeafIndexInPool(
   );
 }
 
-function findLeafIndexInEvents(
-  events: Array<{ topic: string[]; value: string; ledger: number }>,
+export function findPoolCommitmentEventFromEvents(
+  events: RawPoolEvent[],
   target: string,
-): number | null {
+): PoolCommitmentEvent | null {
+  const normalizedTarget = target.replace(/^0x/, "").toLowerCase();
   for (const ev of events) {
+    if (ev.inSuccessfulContractCall === false) continue;
     if (ev.topic.length < 2) continue;
 
     // Decode topic[1]: ScVal U256 = 4-byte type tag + 32-byte big-endian value
@@ -205,13 +238,17 @@ function findLeafIndexInEvents(
       continue;
     }
 
-    if (commitmentFromEvent !== target) continue;
+    if (commitmentFromEvent !== normalizedTarget) continue;
 
     // Found — decode index from value. Value is SCV_MAP; last 4 bytes are the u32 index.
     try {
       const val = base64ToBytes(ev.value);
       const idx = readUInt32BE(val, val.length - 4);
-      return idx;
+      return {
+        leafIndex: idx,
+        ledger: ev.ledger,
+        txHash: ev.txHash ?? "",
+      };
     } catch {
       throw new Error("Failed to decode leaf index from NewCommitment event");
     }

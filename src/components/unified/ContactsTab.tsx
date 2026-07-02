@@ -142,14 +142,14 @@ export default function ContactsTab({ initialContacts }: { initialContacts?: Con
     return accepted.map((contact) => ({
       id: contact.id,
       title: displayName(contact),
-      subtitle: contact.otherRegisteredInPool ? "Pool ready" : "Public wallet only",
+      subtitle: contact.otherRegisteredInPool ? "Private ready" : "Public wallet only",
       icon: (
         <div className="h-8 w-8 rounded-full bg-stone-100 text-stone-700 flex items-center justify-center font-bold text-xs uppercase">
           {(displayName(contact).startsWith("@") ? displayName(contact).slice(1) : displayName(contact)).charAt(0)}
         </div>
       ),
       description: shortAddress(contact.otherStellarPublicKey),
-      metadata: contact.otherRegisteredInPool ? "POOL" : "PUBLIC",
+      metadata: contact.otherRegisteredInPool ? "PRIVATE" : "PUBLIC",
       details: (
         <div className="space-y-4 pt-2">
           <div className="space-y-1">
@@ -195,7 +195,7 @@ export default function ContactsTab({ initialContacts }: { initialContacts?: Con
       details: (
         <div className="space-y-4 pt-2">
           <p className="text-xs text-stone-500 leading-relaxed">
-            This user wants to establish a secure, private connection with you to enable direct note-to-note transfers.
+            This user wants to establish a secure private connection with you.
           </p>
           <div className="flex gap-2">
             <button className={`${primaryButton} h-9 px-4`} disabled={busy} onClick={() => void updateContact(contact.id, "accept")} type="button">

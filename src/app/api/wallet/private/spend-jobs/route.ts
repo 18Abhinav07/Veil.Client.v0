@@ -214,7 +214,7 @@ export async function POST(request: Request) {
     )
   ) {
     return NextResponse.json(
-      { error: "Note-2-Note recipients must include registered public wallet keys" },
+      { error: "Private recipients must include registered public wallet keys" },
       { status: 400 },
     );
   }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import {
@@ -16,6 +16,8 @@ import {
 } from "lucide-react";
 
 import TopHeader from "@/components/unified/TopHeader";
+import StatusToast from "@/components/unified/StatusToast";
+import { useWalletRealtimeEvent } from "@/components/unified/WalletRealtimeProvider";
 
 const USDC_LOGO =
   "https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/usdc.png";
@@ -28,10 +30,12 @@ import {
   type PublicWalletState,
 } from "@/lib/publicWalletCore";
 import {
+  decryptPrivateNote,
   encryptPrivateNote,
   type EncryptedPrivateNotePayload,
   type PrivateNoteSecrets,
 } from "@/lib/noteCrypto";
+import { decryptMarketOutputNote } from "@/lib/marketOutputNoteClient";
 import type { WalletSecrets } from "@/lib/vaultCrypto";
 import { signStellarPayload } from "@/lib/walletSigner";
 
@@ -78,6 +82,10 @@ export type MarketPayoutView = {
   marketId: string;
   amountUnits: string;
   status: string;
+  payoutCommitmentHex: string | null;
+  encryptedNoteCiphertext: string | null;
+  leafIndex: number | null;
+  txHash: string | null;
 };
 
 export type MarketUserNoteView = {
@@ -98,9 +106,27 @@ export type MarketPortfolio = {
   payouts: MarketPayoutView[];
 };
 
+export type NotificationView = {
+  id: string;
+  activityEventId: string | null;
+  type: string;
+  severity: "info" | "success" | "warning" | "error";
+  entityKind: string;
+  entityId: string | null;
+  title: string;
+  body: string | null;
+  actionUrl: string | null;
+  readAt: string | null;
+  seenAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type MarketsPayload = {
   markets: MarketView[];
   portfolio: MarketPortfolio;
+  notifications?: NotificationView[];
+  notificationUnreadCount?: number;
 };
 
 type MarketsPageProps = {
@@ -129,6 +155,27 @@ type DepositSubmitResult = {
   error?: string;
 };
 
+type PreparedWithdrawal = {
+  withdrawal: {
+    status: "proof_ready";
+    relayBody: unknown;
+    changeNote: PrivateNoteSecrets;
+  };
+};
+
+type WithdrawalSubmitResult = {
+  withdrawal: {
+    status: "confirmed" | "submitted";
+    txHash: string;
+    minedLedger: number | null;
+    changeLeafIndex: number | null;
+    indexingStatus: "indexed" | "pending_index" | "pending_mine";
+    error?: string;
+  };
+  sourceNote?: MarketUserNoteView;
+  changeNote?: MarketUserNoteView | null;
+};
+
 const compactButton =
   "inline-flex h-10 items-center justify-center rounded-lg px-4 text-xs font-bold uppercase tracking-[0.12em] transition disabled:cursor-not-allowed disabled:opacity-50";
 const railButton =
@@ -148,6 +195,7 @@ const depositQuickAmounts = ["5", "25", "100"] as const;
 type CategoryFilter = (typeof categoryFilters)[number];
 type StatusFilter = (typeof statusFilters)[number];
 type PortfolioTab = (typeof portfolioTabs)[number];
+type MarketNoteActionTab = "deposit" | "withdraw";
 
 function parseResponse<T>(response: Response): Promise<T> {
   return response.json().then((data) => {
@@ -158,6 +206,10 @@ function parseResponse<T>(response: Response): Promise<T> {
 
 function formatUsd(units: string) {
   return formatStellarUnits(units, "USDC");
+}
+
+function formatInputAmount(units: string) {
+  return formatUsd(units).replace(/ USDC$/, "");
 }
 
 function formatProbability(bps: number) {
@@ -197,6 +249,44 @@ function visibleMarketNotes(notes: MarketUserNoteView[]) {
   return notes.filter(
     (note) => note.status === "unspent" || note.status.startsWith("pending"),
   );
+}
+
+async function decryptMarketUserNote(
+  note: MarketUserNoteView,
+  wallet: WalletSecrets,
+): Promise<PrivateNoteSecrets> {
+  if (!note.encryptedNoteCiphertext) {
+    throw new Error("Selected market note is missing encrypted spend material.");
+  }
+  try {
+    return await decryptPrivateNote(
+      JSON.parse(note.encryptedNoteCiphertext) as EncryptedPrivateNotePayload,
+      wallet,
+    );
+  } catch (error) {
+    if (note.source !== "payout") throw error;
+    if (note.leafIndex === null) {
+      throw new Error("Selected market note is not indexed yet.");
+    }
+    return decryptMarketOutputNote({
+      wallet,
+      commitmentHex: note.commitmentHex,
+      amountUnits: note.amountUnits,
+      leafIndex: note.leafIndex,
+      encryptedNoteCiphertext: note.encryptedNoteCiphertext,
+    });
+  }
+}
+
+function normalizeMarketUserNoteSecrets(
+  note: MarketUserNoteView,
+  secrets: PrivateNoteSecrets,
+): PrivateNoteSecrets {
+  return {
+    ...secrets,
+    amountUnits: note.amountUnits,
+    leafIndex: note.leafIndex ?? secrets.leafIndex,
+  };
 }
 
 function formatDate(value: string | null) {
@@ -364,7 +454,7 @@ function MarketBrowseCard({ market }: { market: MarketView }) {
 
   return (
     <Link
-      className="market-card group box-border flex h-full w-full min-w-0 max-w-[350px] flex-col rounded-lg border border-stone-200/80 bg-[#fbfbfa] p-4 text-left transition hover:border-stone-300 hover:bg-white hover:shadow-[0_18px_42px_rgba(28,25,23,0.06)] sm:max-w-full"
+      className="market-card group box-border flex h-full w-full min-w-0 max-w-[350px] flex-col rounded-3xl bg-white p-5 text-left shadow-sm ring-1 ring-stone-100 transition hover:-translate-y-0.5 hover:shadow-[0_18px_42px_rgba(28,25,23,0.07)] hover:ring-stone-200 sm:max-w-full"
       href={`/market/${market.slug}`}
     >
       <div className="flex min-h-32 flex-col justify-between gap-5">
@@ -377,7 +467,7 @@ function MarketBrowseCard({ market }: { market: MarketView }) {
             </span>
             {!market.poolActive && (
               <span className="basis-full text-amber-700">
-                Market pool contract pending
+                Trading setup pending
               </span>
             )}
           </div>
@@ -395,8 +485,8 @@ function MarketBrowseCard({ market }: { market: MarketView }) {
         <span className="bg-rose-500/65" style={{ width: `${noWidth}%` }} />
       </div>
 
-      <div className="mt-4 grid grid-cols-2 divide-x divide-stone-200/80 border-t border-stone-200/80 pt-4">
-        <div className="pr-4">
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <div className="rounded-2xl bg-stone-50/70 px-3 py-3">
           <span className="inline-flex items-center gap-2 text-xs font-bold text-emerald-800">
             <ArrowUpRight className="h-4 w-4" />
             YES
@@ -410,7 +500,7 @@ function MarketBrowseCard({ market }: { market: MarketView }) {
             </span>
           </span>
         </div>
-        <div className="pl-4">
+        <div className="rounded-2xl bg-stone-50/70 px-3 py-3">
           <span className="inline-flex items-center gap-2 text-xs font-bold text-rose-800">
             <ArrowDownRight className="h-4 w-4" />
             NO
@@ -446,6 +536,8 @@ export default function MarketsPage({
 }: MarketsPageProps) {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const marketRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastFocusRefreshRef = useRef(0);
   const [markets, setMarkets] = useState<MarketView[]>(
     initialData?.markets ?? [],
   );
@@ -467,6 +559,12 @@ export default function MarketsPage({
   const [query, setQuery] = useState("");
   const [depositAmount, setDepositAmount] = useState("25");
   const [depositing, setDepositing] = useState(false);
+  const [marketNoteActionTab, setMarketNoteActionTab] =
+    useState<MarketNoteActionTab>("deposit");
+  const [selectedWithdrawNoteId, setSelectedWithdrawNoteId] = useState("");
+  const [withdrawAmount, setWithdrawAmount] = useState("10");
+  const [withdrawing, setWithdrawing] = useState(false);
+  const [claimingPayoutId, setClaimingPayoutId] = useState("");
   const [publicWallet, setPublicWallet] = useState<PublicWalletState | null>(
     initialPublicAccount,
   );
@@ -477,10 +575,23 @@ export default function MarketsPage({
   const [loading, setLoading] = useState(!initialData);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [notifications, setNotifications] = useState<NotificationView[]>(
+    initialData?.notifications ?? [],
+  );
+  const [notificationUnreadCount, setNotificationUnreadCount] = useState(
+    initialData?.notificationUnreadCount ?? 0,
+  );
 
   const activeNotes = useMemo(
     () => spendableMarketNotes(portfolio.notes),
     [portfolio.notes],
+  );
+  const selectedWithdrawNote = useMemo(
+    () =>
+      activeNotes.find((note) => note.id === selectedWithdrawNoteId) ??
+      activeNotes[0] ??
+      null,
+    [activeNotes, selectedWithdrawNoteId],
   );
   const displayNotes = useMemo(
     () => visibleMarketNotes(portfolio.notes),
@@ -508,7 +619,11 @@ export default function MarketsPage({
     .toString();
   const openMarkets = markets.filter(isMarketOpen).length;
   const claimablePayouts = portfolio.payouts.filter(
-    (payout) => payout.status !== "claimed",
+    (payout) =>
+      payout.status === "confirmed" &&
+      Boolean(payout.payoutCommitmentHex) &&
+      Boolean(payout.encryptedNoteCiphertext) &&
+      payout.leafIndex !== null,
   ).length;
   const depositAmountUnits = useMemo(() => {
     try {
@@ -517,25 +632,49 @@ export default function MarketsPage({
       return "";
     }
   }, [depositAmount]);
-  const publicWalletBlockReason =
+  const withdrawAmountUnits = useMemo(() => {
+    try {
+      return decimalToStellarUnits(withdrawAmount);
+    } catch {
+      return "";
+    }
+  }, [withdrawAmount]);
+  const publicWalletReadinessReason =
     publicWallet && !publicWallet.exists
       ? "Public wallet is not funded yet"
       : publicWallet && !publicWallet.hasUsdcTrustline
         ? "Public wallet is missing a USDC trustline"
-        : publicWallet &&
+        : "";
+  const depositPublicWalletBlockReason =
+    publicWalletReadinessReason ||
+    (publicWallet &&
             depositAmountUnits &&
             BigInt(publicWallet.usdcUnits || "0") < BigInt(depositAmountUnits)
-          ? `Insufficient public USDC. Available ${formatUsd(publicWallet.usdcUnits)}.`
-          : "";
+      ? `Insufficient public USDC. Available ${formatUsd(publicWallet.usdcUnits)}.`
+      : "");
   const depositDisabled = Boolean(
     !activeMarketPool ||
     depositing ||
     publicWalletLoading ||
-    publicWalletBlockReason,
+    depositPublicWalletBlockReason,
+  );
+  const withdrawBlockReason =
+    !selectedWithdrawNote
+      ? "Select a spendable Market Note"
+      : !withdrawAmountUnits
+        ? "Enter a withdrawal amount"
+        : BigInt(withdrawAmountUnits) > BigInt(selectedWithdrawNote.amountUnits)
+          ? `Selected note only has ${formatUsd(selectedWithdrawNote.amountUnits)}.`
+          : publicWalletReadinessReason;
+  const withdrawDisabled = Boolean(
+    !activeMarketPool ||
+    withdrawing ||
+    publicWalletLoading ||
+    withdrawBlockReason,
   );
 
-  const loadMarkets = async () => {
-    setLoading(true);
+  const loadMarkets = useCallback(async (options?: { showLoading?: boolean }) => {
+    if (options?.showLoading !== false) setLoading(true);
     setError("");
     try {
       const payload = await parseResponse<MarketsPayload>(
@@ -543,12 +682,22 @@ export default function MarketsPage({
       );
       setMarkets(payload.markets);
       setPortfolio(payload.portfolio);
+      setNotifications(payload.notifications ?? []);
+      setNotificationUnreadCount(payload.notificationUnreadCount ?? 0);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (options?.showLoading !== false) setLoading(false);
     }
-  };
+  }, []);
+
+  const scheduleMarketRefresh = useCallback(() => {
+    if (previewMode || marketRefreshTimer.current) return;
+    marketRefreshTimer.current = setTimeout(() => {
+      marketRefreshTimer.current = null;
+      void loadMarkets({ showLoading: false });
+    }, 500);
+  }, [loadMarkets, previewMode]);
 
   const loadPublicWallet = async () => {
     setPublicWalletLoading(true);
@@ -573,11 +722,48 @@ export default function MarketsPage({
 
   useEffect(() => {
     if (previewMode) return;
-    void loadMarkets();
+    void loadMarkets({ showLoading: true });
     void loadPublicWallet();
-    // Initial market bootstrap only; user can refresh by revisiting the page.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [previewMode]);
+  }, [loadMarkets, previewMode]);
+
+  useEffect(() => {
+    return () => {
+      if (marketRefreshTimer.current) {
+        clearTimeout(marketRefreshTimer.current);
+        marketRefreshTimer.current = null;
+      }
+    };
+  }, []);
+
+  useWalletRealtimeEvent(
+    useCallback(
+      (event) => {
+        if (event.event !== "wallet_activity") return;
+        const eventType = String(event.data.eventType ?? "");
+        if (eventType.startsWith("market_")) scheduleMarketRefresh();
+      },
+      [scheduleMarketRefresh],
+    ),
+  );
+
+  useEffect(() => {
+    if (previewMode) return undefined;
+    const refreshIfStale = () => {
+      const now = Date.now();
+      if (now - lastFocusRefreshRef.current < 5000) return;
+      lastFocusRefreshRef.current = now;
+      scheduleMarketRefresh();
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") refreshIfStale();
+    };
+    window.addEventListener("focus", refreshIfStale);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      window.removeEventListener("focus", refreshIfStale);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [previewMode, scheduleMarketRefresh]);
 
   useEffect(() => {
     if (searchParams.get("view") === "portfolio") {
@@ -616,7 +802,7 @@ export default function MarketsPage({
 
   const handleMarketDeposit = async () => {
     if (!activeMarketPool) {
-      setError("Market pool contract pending");
+      setError("Market setup pending");
       return;
     }
     const amountUnits = decimalToStellarUnits(depositAmount);
@@ -638,7 +824,7 @@ export default function MarketsPage({
     }
     setDepositing(true);
     setError("");
-    setMessage("Preparing market pool deposit...");
+    setMessage("Preparing market deposit...");
     setActiveView("portfolio");
     setPortfolioTab("notes");
     try {
@@ -743,6 +929,194 @@ export default function MarketsPage({
     }
   };
 
+  const handleMarketWithdraw = async () => {
+    if (!activeMarketPool) {
+      setError("Market setup pending");
+      return;
+    }
+    const selectedNote = selectedWithdrawNote;
+    if (!selectedNote) {
+      setError("Select a spendable Market Note.");
+      return;
+    }
+    if (!withdrawAmountUnits) {
+      setError("Enter a withdrawal amount.");
+      return;
+    }
+    if (BigInt(withdrawAmountUnits) > BigInt(selectedNote.amountUnits)) {
+      setError(`Selected note only has ${formatUsd(selectedNote.amountUnits)}.`);
+      return;
+    }
+    setWithdrawing(true);
+    setError("");
+    setMessage("Preparing market note withdrawal...");
+    setActiveView("portfolio");
+    setPortfolioTab("notes");
+    try {
+      const sourceNote = normalizeMarketUserNoteSecrets(
+        selectedNote,
+        await decryptMarketUserNote(selectedNote, wallet),
+      );
+      if (sourceNote.leafIndex === null) {
+        throw new Error("Selected market note is not indexed yet.");
+      }
+      if (sourceNote.commitmentHex !== selectedNote.commitmentHex) {
+        throw new Error(
+          "Selected market note does not match its encrypted note payload.",
+        );
+      }
+
+      const prepared = await parseResponse<PreparedWithdrawal>(
+        await fetch("/api/markets/withdrawals", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            intent: "prepare",
+            noteId: selectedNote.id,
+            inputCommitmentHex: selectedNote.commitmentHex,
+            withdrawAmountUnits,
+            notePrivateKeyHex: wallet.bn254NotePrivateKeyHex,
+            senderEncryptionPublicHex: wallet.x25519PublicHex,
+            membershipBlindingHex: wallet.membershipBlindingHex,
+            noteBlindingHex: sourceNote.blindingHex,
+            noteAmountUnits: sourceNote.amountUnits,
+            noteLeafIndex: sourceNote.leafIndex,
+            dummyBlindingHex: sourceNote.dummyBlindingHex,
+          }),
+        }),
+      );
+
+      const changeNote =
+        prepared.withdrawal.changeNote &&
+        BigInt(prepared.withdrawal.changeNote.amountUnits || "0") > BigInt(0)
+          ? prepared.withdrawal.changeNote
+          : null;
+      const encryptedChangeNote = changeNote
+        ? await encryptPrivateNote(changeNote, wallet)
+        : null;
+
+      setMessage("Relaying market withdrawal...");
+      const submitted = await parseResponse<WithdrawalSubmitResult>(
+        await fetch("/api/markets/withdrawals", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            intent: "submit",
+            noteId: selectedNote.id,
+            inputCommitmentHex: selectedNote.commitmentHex,
+            withdrawAmountUnits,
+            relayBody: prepared.withdrawal.relayBody,
+            changeCommitmentHex: changeNote?.commitmentHex ?? null,
+            changeAmountUnits: changeNote?.amountUnits ?? null,
+            encryptedChangeNoteCiphertext: encryptedChangeNote
+              ? JSON.stringify(encryptedChangeNote)
+              : null,
+          }),
+        }),
+      );
+
+      if (
+        submitted.withdrawal.indexingStatus !== "indexed" ||
+        submitted.withdrawal.status !== "confirmed"
+      ) {
+        setMessage(
+          submitted.withdrawal.indexingStatus === "pending_mine"
+            ? `Market withdrawal submitted as ${shortHash(submitted.withdrawal.txHash)}. Waiting for mining confirmation.`
+            : `Market withdrawal submitted as ${shortHash(submitted.withdrawal.txHash)}. Change note indexing is still catching up.`,
+        );
+        await loadMarkets({ showLoading: false });
+        await loadPublicWallet();
+        return;
+      }
+
+      setPortfolio((current) => ({
+        ...current,
+        notes: [
+          ...(submitted.changeNote ? [submitted.changeNote] : []),
+          ...current.notes
+            .map((note) =>
+              note.id === selectedNote.id
+                ? (submitted.sourceNote ?? { ...note, status: "spent" })
+                : note,
+            )
+            .filter((note) => note.status !== "spent"),
+        ],
+      }));
+      setSelectedWithdrawNoteId("");
+      setWithdrawAmount("10");
+      setMessage("Market Note withdrawn to your public wallet.");
+      void loadMarkets({ showLoading: false });
+      void loadPublicWallet();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setMessage("");
+    } finally {
+      setWithdrawing(false);
+    }
+  };
+
+  const claimMarketPayout = async (payout: MarketPayoutView) => {
+    if (
+      !payout.payoutCommitmentHex ||
+      !payout.encryptedNoteCiphertext ||
+      payout.leafIndex === null
+    ) {
+      setError("Payout output is not indexed yet.");
+      return;
+    }
+    setClaimingPayoutId(payout.id);
+    setError("");
+    setMessage("");
+    try {
+      const payoutPrivateNote = await decryptMarketOutputNote({
+        wallet,
+        commitmentHex: payout.payoutCommitmentHex,
+        amountUnits: payout.amountUnits,
+        leafIndex: payout.leafIndex,
+        encryptedNoteCiphertext: payout.encryptedNoteCiphertext,
+      });
+      const walletEncryptedPayoutNote = await encryptPrivateNote(payoutPrivateNote, wallet);
+      const payload = await parseResponse<{
+        payout: MarketPayoutView;
+        note: MarketUserNoteView;
+      }>(
+        await fetch(
+          `/api/markets/payouts/${encodeURIComponent(payout.id)}/claim`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              commitmentHex: payout.payoutCommitmentHex,
+              encryptedNoteCiphertext: JSON.stringify(walletEncryptedPayoutNote),
+            }),
+          },
+        ),
+      );
+      const payoutNote: MarketUserNoteView = {
+        ...payload.note,
+        source: "payout",
+        status: "unspent",
+      };
+      setPortfolio((current) => ({
+        ...current,
+        payouts: current.payouts.map((item) =>
+          item.id === payout.id ? payload.payout : item,
+        ),
+        notes: [
+          payoutNote,
+          ...current.notes.filter((note) => note.id !== payoutNote.id),
+        ],
+      }));
+      setPortfolioTab("notes");
+      setMessage("Payout claimed into a spendable Market Note.");
+      void loadMarkets({ showLoading: false });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setClaimingPayoutId("");
+    }
+  };
+
   return (
     <div className="flex h-screen w-screen flex-col md:flex-row overflow-hidden bg-stone-50 font-sans text-stone-950">
       {/* Sidebar */}
@@ -839,7 +1213,9 @@ export default function MarketsPage({
           }}
           title="Markets"
           accountEmail={accountEmail}
-          initialNotifications={[]}
+          initialNotifications={notifications}
+          notificationUnreadCount={notificationUnreadCount}
+          onNotificationsRead={() => setNotificationUnreadCount(0)}
         />
 
         <main className="flex-1 overflow-y-auto no-scrollbar p-4 md:p-6 pb-24 md:pb-6">
@@ -884,7 +1260,7 @@ export default function MarketsPage({
 
             <section className="market-balance-strip grid gap-3.5 md:grid-cols-3">
               <MarketBalanceCard
-                detail="Private market pool balance"
+                detail="Spendable private balance"
                 label="Market Notes"
                 tone="notes"
                 value={formatUsd(totalMarketBalance)}
@@ -1020,7 +1396,7 @@ export default function MarketsPage({
                     <div className="mt-5">
                       {portfolioTab === "positions" &&
                         (portfolio.bets.length === 0 ? (
-                          <div className="rounded-lg border border-dashed border-stone-200/80 px-6 py-12 text-center">
+                          <div className="rounded-3xl bg-white px-6 py-12 text-center shadow-sm ring-1 ring-stone-100">
                             <p className="text-sm font-bold text-stone-950">
                               No positions yet
                             </p>
@@ -1029,32 +1405,34 @@ export default function MarketsPage({
                             </p>
                           </div>
                         ) : (
-                          <div className="divide-y divide-stone-200/80 border-y border-stone-200/80">
-                            {portfolio.bets.map((bet) => (
-                              <Link
-                                key={bet.id}
-                                className="flex items-center justify-between gap-4 py-4 text-sm transition hover:bg-white/60"
-                                href={`/market/${bet.marketSlug}`}
-                              >
-                                <span>
-                                  <span className="block font-bold text-stone-950">
-                                    {bet.marketSlug}
+                          <div className="portfolio-table-card rounded-3xl bg-white p-3 shadow-sm ring-1 ring-stone-100">
+                            <div className="divide-y divide-stone-100">
+                              {portfolio.bets.map((bet) => (
+                                <Link
+                                  key={bet.id}
+                                  className="flex items-center justify-between gap-4 rounded-2xl px-3 py-3 text-sm transition hover:bg-stone-50/70"
+                                  href={`/market/${bet.marketSlug}`}
+                                >
+                                  <span className="min-w-0">
+                                    <span className="block truncate font-bold text-stone-950">
+                                      {bet.marketSlug}
+                                    </span>
+                                    <span className="mt-1 block text-xs font-semibold text-stone-500">
+                                      {bet.outcome} position, {bet.status}
+                                    </span>
                                   </span>
-                                  <span className="mt-1 block text-xs font-semibold text-stone-500">
-                                    {bet.outcome} position, {bet.status}
+                                  <span className="shrink-0 font-bold text-stone-900">
+                                    {formatUsd(bet.amountUnits)}
                                   </span>
-                                </span>
-                                <span className="font-bold text-stone-900">
-                                  {formatUsd(bet.amountUnits)}
-                                </span>
-                              </Link>
-                            ))}
+                                </Link>
+                              ))}
+                            </div>
                           </div>
                         ))}
 
                       {portfolioTab === "notes" &&
                         (displayNotes.length === 0 ? (
-                          <div className="rounded-lg border border-dashed border-stone-200/80 px-6 py-12 text-center">
+                          <div className="rounded-3xl bg-white px-6 py-12 text-center shadow-sm ring-1 ring-stone-100">
                             <p className="text-sm font-bold text-stone-950">
                               No spendable Market Notes
                             </p>
@@ -1073,7 +1451,7 @@ export default function MarketsPage({
 
                       {portfolioTab === "payouts" &&
                         (portfolio.payouts.length === 0 ? (
-                          <div className="rounded-lg border border-dashed border-stone-200/80 px-6 py-12 text-center">
+                          <div className="rounded-3xl bg-white px-6 py-12 text-center shadow-sm ring-1 ring-stone-100">
                             <p className="text-sm font-bold text-stone-950">
                               No payouts yet
                             </p>
@@ -1082,216 +1460,356 @@ export default function MarketsPage({
                             </p>
                           </div>
                         ) : (
-                          <div className="divide-y divide-stone-200/80 border-y border-stone-200/80">
-                            {portfolio.payouts.map((payout) => (
-                              <div
-                                key={payout.id}
-                                className="flex items-center justify-between gap-4 py-4"
-                              >
-                                <span>
-                                  <span className="block text-sm font-bold text-stone-950">
-                                    Payout
-                                  </span>
-                                  <span className="mt-1 block text-xs font-semibold text-stone-500">
-                                    {payout.status}
-                                  </span>
-                                </span>
-                                <span className="font-bold text-stone-950">
-                                  {formatUsd(payout.amountUnits)}
-                                </span>
-                              </div>
-                            ))}
+                          <div className="portfolio-table-card rounded-3xl bg-white p-3 shadow-sm ring-1 ring-stone-100">
+                            <div className="divide-y divide-stone-100">
+                              {portfolio.payouts.map((payout) => {
+                                const ready =
+                                  payout.status === "confirmed" &&
+                                  Boolean(payout.payoutCommitmentHex) &&
+                                  Boolean(payout.encryptedNoteCiphertext) &&
+                                  payout.leafIndex !== null;
+                                const claimed = payout.status === "claimed";
+                                return (
+                                  <div
+                                    key={payout.id}
+                                    className="flex items-center justify-between gap-4 rounded-2xl px-3 py-3 transition hover:bg-stone-50/70"
+                                  >
+                                    <span className="min-w-0">
+                                      <span className="block text-sm font-bold text-stone-950">
+                                        {formatUsd(payout.amountUnits)}
+                                      </span>
+                                      <span className="mt-1 block text-xs font-semibold text-stone-500">
+                                        {payout.status}
+                                        {payout.txHash
+                                          ? `, ${shortHash(payout.txHash)}`
+                                          : ""}
+                                      </span>
+                                    </span>
+                                    {claimed ? (
+                                      <span className="shrink-0 rounded-full bg-emerald-50 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-700">
+                                        Claimed
+                                      </span>
+                                    ) : ready ? (
+                                      <button
+                                        className="shrink-0 rounded-full bg-stone-950 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white transition hover:bg-stone-800 disabled:opacity-60"
+                                        disabled={claimingPayoutId === payout.id}
+                                        onClick={() =>
+                                          void claimMarketPayout(payout)
+                                        }
+                                        type="button"
+                                      >
+                                        {claimingPayoutId === payout.id
+                                          ? "Claiming"
+                                          : "Claim payout"}
+                                      </button>
+                                    ) : (
+                                      <span className="shrink-0 rounded-full bg-stone-100 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-stone-500">
+                                        Awaiting payout note
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </div>
                         ))}
                     </div>
                   </section>
 
                   <aside className="market-deposit-panel min-w-0 lg:sticky lg:top-5 lg:self-start">
-                    <div className="border-y border-stone-200/80 py-5">
-                      <div>
-                        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-stone-400">
-                          Market Notes
-                        </p>
-                        <h2 className="mt-1 text-xl font-bold tracking-tight text-stone-950">
-                          Deposit to Market Notes
-                        </h2>
-                        <p className="mt-2 text-sm font-semibold leading-6 text-stone-500">
-                          Public wallet balance funds the deposit. New Market
-                          Notes can be used on any open market.
-                        </p>
+                    <div className="market-note-action-card rounded-3xl bg-white p-5 shadow-sm ring-1 ring-stone-100">
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between lg:flex-col lg:items-stretch">
+                        <div>
+                          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-stone-400">
+                            Market Notes
+                          </p>
+                          <h2 className="mt-1 text-xl font-bold tracking-tight text-stone-950">
+                            Deposit or withdraw
+                          </h2>
+                          <p className="mt-2 text-sm font-semibold leading-6 text-stone-500">
+                            Move public USDC into private Market Notes, or send
+                            Market Notes back to your public wallet.
+                          </p>
+                        </div>
+
+                        <div
+                          className="relative flex h-10 shrink-0 items-center rounded-full bg-stone-100/60 p-1"
+                          role="tablist"
+                          aria-label="Market note action"
+                        >
+                          {(["deposit", "withdraw"] as const).map((tab) => (
+                            <button
+                              key={tab}
+                              aria-selected={marketNoteActionTab === tab}
+                              className={`h-full rounded-full px-4 text-xs font-bold transition ${
+                                marketNoteActionTab === tab
+                                  ? "bg-white text-stone-950 shadow-sm"
+                                  : "text-stone-500 hover:text-stone-950"
+                              }`}
+                              onClick={() => setMarketNoteActionTab(tab)}
+                              role="tab"
+                              type="button"
+                            >
+                              {tab === "deposit" ? "Deposit" : "Withdraw"}
+                            </button>
+                          ))}
+                        </div>
                       </div>
 
-                      <div className="rounded-3xl border border-stone-200/80 bg-white p-5 shadow-sm shrink-0 mt-5">
-                        <h3 className="text-xs font-bold uppercase tracking-widest text-stone-400 mb-4">
-                          Public Wallet Balance
-                        </h3>
-
-                        <div className="divide-y divide-stone-100">
-                          {/* USDC Row */}
-                          <div className="py-4 flex items-center justify-between group hover:bg-stone-50/40 rounded-2xl px-3 -mx-3 transition">
-                            <div className="flex items-center gap-4">
-                              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-stone-50 border border-stone-100 shrink-0 p-1">
-                                <img
-                                  src={USDC_LOGO}
-                                  alt="USDC Logo"
-                                  className="w-full h-full object-contain"
-                                />
-                              </div>
-                              <div>
-                                <div className="flex items-center gap-1.5">
-                                  <p className="font-semibold text-sm text-stone-900">
-                                    USD Coin
-                                  </p>
-                                  <span className="text-[10px] font-bold text-stone-400 bg-stone-100 px-1.5 py-0.5 rounded-md">
-                                    USDC
-                                  </span>
-                                </div>
-                                <p className="text-[10px] font-medium text-stone-400 mt-0.5">
-                                  {publicWalletLoading
-                                    ? "Loading"
-                                    : publicWallet?.hasUsdcTrustline
-                                      ? "Trustline Ready"
-                                      : "Trustline Needed"}
-                                </p>
-                              </div>
+                      <div className="mt-5 divide-y divide-stone-100">
+                        <div className="flex items-center justify-between gap-4 rounded-2xl px-3 py-3 transition hover:bg-stone-50/70">
+                          <div className="flex min-w-0 items-center gap-4">
+                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-stone-100 bg-stone-50 p-1">
+                              <img
+                                src={USDC_LOGO}
+                                alt="USDC Logo"
+                                className="h-full w-full object-contain"
+                              />
                             </div>
-
-                            <div className="text-right">
-                              <p className="font-semibold text-sm text-stone-900 font-mono">
-                                {publicWalletLoading
-                                  ? "--"
-                                  : publicWallet
-                                    ? formatStellarUnits(
-                                        publicWallet.usdcUnits,
-                                        "",
-                                      ).split(" ")[0]
-                                    : "--"}
-                              </p>
-                              <p className="text-[10px] font-medium text-stone-400 mt-0.5 font-mono">
-                                {publicWalletLoading
-                                  ? "--"
-                                  : publicWallet
-                                    ? `$${Number(formatStellarUnits(publicWallet.usdcUnits, "").split(" ")[0]).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                                    : "--"}
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <p className="text-sm font-semibold text-stone-900">
+                                  USD Coin
+                                </p>
+                                <span className="rounded-md bg-stone-100 px-1.5 py-0.5 text-[10px] font-bold text-stone-400">
+                                  USDC
+                                </span>
+                              </div>
+                              <p className="mt-0.5 text-[10px] font-medium text-stone-400">
+                                Public wallet
                               </p>
                             </div>
                           </div>
 
-                          {/* XLM Row */}
-                          <div className="py-4 flex items-center justify-between group hover:bg-stone-50/40 rounded-2xl px-3 -mx-3 transition">
-                            <div className="flex items-center gap-4">
-                              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-stone-50 border border-stone-100 shrink-0 p-1">
-                                <img
-                                  src={XLM_LOGO}
-                                  alt="XLM Logo"
-                                  className="w-full h-full object-contain"
-                                />
-                              </div>
-                              <div>
-                                <div className="flex items-center gap-1.5">
-                                  <p className="font-semibold text-sm text-stone-900">
-                                    Stellar Lumens
-                                  </p>
-                                  <span className="text-[10px] font-bold text-stone-400 bg-stone-100 px-1.5 py-0.5 rounded-md">
-                                    XLM
-                                  </span>
-                                </div>
-                                <p className="text-[10px] font-medium text-stone-400 mt-0.5">
-                                  Network Native
-                                </p>
-                              </div>
-                            </div>
+                          <div className="shrink-0 text-right">
+                            <p className="font-mono text-sm font-semibold text-stone-900">
+                              {publicWalletLoading
+                                ? "--"
+                                : publicWallet
+                                  ? formatStellarUnits(
+                                      publicWallet.usdcUnits,
+                                      "",
+                                    ).split(" ")[0]
+                                  : "--"}
+                            </p>
+                            <p className="mt-0.5 font-mono text-[10px] font-medium text-stone-400">
+                              {publicWalletLoading
+                                ? "--"
+                                : publicWallet
+                                  ? `$${Number(formatStellarUnits(publicWallet.usdcUnits, "").split(" ")[0]).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                  : "--"}
+                            </p>
+                          </div>
+                        </div>
 
-                            <div className="text-right">
-                              <p className="font-semibold text-sm text-stone-900 font-mono">
-                                {publicWalletLoading
-                                  ? "--"
-                                  : publicWallet
-                                    ? formatStellarUnits(
-                                        publicWallet.xlmUnits,
-                                        "",
-                                      ).split(" ")[0]
-                                    : "--"}
-                              </p>
-                              <p className="text-[10px] font-medium text-stone-400 mt-0.5 font-mono">
-                                {publicWalletLoading
-                                  ? "--"
-                                  : publicWallet
-                                    ? `${formatStellarUnits(publicWallet.xlmUnits, "").split(" ")[0]} XLM`
-                                    : "--"}
+                        <div className="flex items-center justify-between gap-4 rounded-2xl px-3 py-3 transition hover:bg-stone-50/70">
+                          <div className="flex min-w-0 items-center gap-4">
+                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-stone-100 bg-stone-50 p-1">
+                              <img
+                                src={XLM_LOGO}
+                                alt="XLM Logo"
+                                className="h-full w-full object-contain"
+                              />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <p className="text-sm font-semibold text-stone-900">
+                                  Stellar Lumens
+                                </p>
+                                <span className="rounded-md bg-stone-100 px-1.5 py-0.5 text-[10px] font-bold text-stone-400">
+                                  XLM
+                                </span>
+                              </div>
+                              <p className="mt-0.5 text-[10px] font-medium text-stone-400">
+                                Network fees
                               </p>
                             </div>
+                          </div>
+
+                          <div className="shrink-0 text-right">
+                            <p className="font-mono text-sm font-semibold text-stone-900">
+                              {publicWalletLoading
+                                ? "--"
+                                : publicWallet
+                                  ? formatStellarUnits(
+                                      publicWallet.xlmUnits,
+                                      "",
+                                    ).split(" ")[0]
+                                  : "--"}
+                            </p>
+                            <p className="mt-0.5 font-mono text-[10px] font-medium text-stone-400">
+                              {publicWalletLoading
+                                ? "--"
+                                : publicWallet
+                                  ? `${formatStellarUnits(publicWallet.xlmUnits, "").split(" ")[0]} XLM`
+                                  : "--"}
+                            </p>
                           </div>
                         </div>
                       </div>
 
-                      {(publicWalletBlockReason || publicWalletError) && (
-                        <p className="mt-3 text-xs font-bold text-amber-700">
-                          {publicWalletBlockReason || publicWalletError}
-                        </p>
-                      )}
+                      {marketNoteActionTab === "deposit" ? (
+                        <div className="mt-5">
+                          {(depositPublicWalletBlockReason ||
+                            publicWalletError) && (
+                            <p className="mb-4 text-xs font-bold text-amber-700">
+                              {depositPublicWalletBlockReason ||
+                                publicWalletError}
+                            </p>
+                          )}
 
-                      <div className="mt-5 flex flex-wrap gap-2">
-                        {depositQuickAmounts.map((quickAmount) => (
+                          <div className="flex flex-wrap gap-2">
+                            {depositQuickAmounts.map((quickAmount) => (
+                              <button
+                                key={quickAmount}
+                                className={`h-9 rounded-xl px-3 text-xs font-bold transition ${
+                                  depositAmount === quickAmount
+                                    ? "bg-stone-950 text-[#fbfbfa]"
+                                    : "bg-stone-100/60 text-stone-600 hover:bg-stone-100 hover:text-stone-950"
+                                }`}
+                                onClick={() => setDepositAmount(quickAmount)}
+                                type="button"
+                              >
+                                {quickAmount} USDC
+                              </button>
+                            ))}
+                          </div>
+
+                          <label className="mt-5 block">
+                            <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-stone-400">
+                              Amount
+                            </span>
+                            <input
+                              className="mt-2 h-11 w-full border-b border-stone-200 bg-transparent px-1 text-sm font-bold text-stone-950 outline-none transition focus:border-stone-900"
+                              min="0.0000001"
+                              onChange={(event) =>
+                                setDepositAmount(event.target.value)
+                              }
+                              step="0.0000001"
+                              type="number"
+                              value={depositAmount}
+                            />
+                          </label>
+
                           <button
-                            key={quickAmount}
-                            className={`h-9 rounded-xl px-3 text-xs font-bold transition ${
-                              depositAmount === quickAmount
-                                ? "bg-stone-950 text-[#fbfbfa]"
-                                : "bg-stone-100/60 text-stone-600 hover:bg-stone-100 hover:text-stone-950"
+                            className={`${compactButton} mt-5 w-full ${
+                              !depositDisabled
+                                ? "bg-stone-950 text-[#fbfbfa] hover:bg-stone-800"
+                                : "border border-stone-200 bg-stone-100 text-stone-500"
                             }`}
-                            onClick={() => setDepositAmount(quickAmount)}
+                            disabled={depositDisabled}
+                            onClick={() => void handleMarketDeposit()}
                             type="button"
                           >
-                            {quickAmount} USDC
+                            {depositing ? (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                              <ShieldCheck className="mr-2 h-4 w-4" />
+                            )}
+                            Deposit to Market Notes
                           </button>
-                        ))}
-                      </div>
+                        </div>
+                      ) : (
+                        <div className="mt-5">
+                          <label className="block">
+                            <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-stone-400">
+                              Market Note
+                            </span>
+                            <select
+                              className="mt-2 h-11 w-full border-b border-stone-200 bg-transparent px-1 text-sm font-bold text-stone-950 outline-none transition focus:border-stone-900"
+                              disabled={activeNotes.length === 0 || withdrawing}
+                              onChange={(event) =>
+                                setSelectedWithdrawNoteId(event.target.value)
+                              }
+                              value={selectedWithdrawNote?.id ?? ""}
+                            >
+                              {activeNotes.length === 0 ? (
+                                <option value="">No spendable Market Notes</option>
+                              ) : (
+                                activeNotes.map((note) => (
+                                  <option key={note.id} value={note.id}>
+                                    {formatUsd(note.amountUnits)} ·{" "}
+                                    {shortHash(note.commitmentHex)}
+                                  </option>
+                                ))
+                              )}
+                            </select>
+                          </label>
 
-                      <label className="mt-5 block">
-                        <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-stone-400">
-                          Amount
-                        </span>
-                        <input
-                          className="mt-2 h-11 w-full border-b border-stone-200 bg-transparent px-1 text-sm font-bold text-stone-950 outline-none transition focus:border-stone-900"
-                          min="0.0000001"
-                          onChange={(event) =>
-                            setDepositAmount(event.target.value)
-                          }
-                          step="0.0000001"
-                          type="number"
-                          value={depositAmount}
-                        />
-                      </label>
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            {selectedWithdrawNote && (
+                              <button
+                                className="h-9 rounded-xl bg-stone-100/60 px-3 text-xs font-bold text-stone-600 transition hover:bg-stone-100 hover:text-stone-950"
+                                onClick={() =>
+                                  setWithdrawAmount(
+                                    formatInputAmount(
+                                      selectedWithdrawNote.amountUnits,
+                                    ),
+                                  )
+                                }
+                                type="button"
+                              >
+                                Use max
+                              </button>
+                            )}
+                            {["5", "10", "25"].map((quickAmount) => (
+                              <button
+                                key={quickAmount}
+                                className={`h-9 rounded-xl px-3 text-xs font-bold transition ${
+                                  withdrawAmount === quickAmount
+                                    ? "bg-stone-950 text-[#fbfbfa]"
+                                    : "bg-stone-100/60 text-stone-600 hover:bg-stone-100 hover:text-stone-950"
+                                }`}
+                                onClick={() => setWithdrawAmount(quickAmount)}
+                                type="button"
+                              >
+                                {quickAmount} USDC
+                              </button>
+                            ))}
+                          </div>
 
-                      <button
-                        className={`${compactButton} mt-5 w-full ${
-                          !depositDisabled
-                            ? "bg-stone-950 text-[#fbfbfa] hover:bg-stone-800"
-                            : "border border-stone-200 bg-stone-100 text-stone-500"
-                        }`}
-                        disabled={depositDisabled}
-                        onClick={() => void handleMarketDeposit()}
-                        type="button"
-                      >
-                        {depositing ? (
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        ) : (
-                          <ShieldCheck className="mr-2 h-4 w-4" />
-                        )}
-                        Deposit to Market Notes
-                      </button>
+                          <label className="mt-5 block">
+                            <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-stone-400">
+                              Amount
+                            </span>
+                            <input
+                              className="mt-2 h-11 w-full border-b border-stone-200 bg-transparent px-1 text-sm font-bold text-stone-950 outline-none transition focus:border-stone-900"
+                              min="0.0000001"
+                              onChange={(event) =>
+                                setWithdrawAmount(event.target.value)
+                              }
+                              step="0.0000001"
+                              type="number"
+                              value={withdrawAmount}
+                            />
+                          </label>
 
-                      <div className="mt-4 flex flex-wrap items-center gap-3 text-xs font-bold text-stone-500">
-                        <span>
-                          Private market pool:{" "}
-                          {activeMarketPool
-                            ? `${shortHash(activeMarketPool.contractId)} · depth ${activeMarketPool.treeDepth ?? 15}`
-                            : "pending"}
-                        </span>
-                        <span className="h-1 w-1 rounded-full bg-stone-300" />
-                        <span>{activeNotes.length} spendable notes</span>
-                      </div>
+                          {(withdrawBlockReason || publicWalletError) && (
+                            <p className="mt-3 text-xs font-bold text-amber-700">
+                              {withdrawBlockReason || publicWalletError}
+                            </p>
+                          )}
+
+                          <button
+                            className={`${compactButton} mt-5 w-full ${
+                              !withdrawDisabled
+                                ? "bg-stone-950 text-[#fbfbfa] hover:bg-stone-800"
+                                : "border border-stone-200 bg-stone-100 text-stone-500"
+                            }`}
+                            disabled={withdrawDisabled}
+                            onClick={() => void handleMarketWithdraw()}
+                            type="button"
+                          >
+                            {withdrawing ? (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                              <ArrowUpRight className="mr-2 h-4 w-4" />
+                            )}
+                            Withdraw to Public Wallet
+                          </button>
+                        </div>
+                      )}
+
                     </div>
                   </aside>
                 </div>
@@ -1302,50 +1820,14 @@ export default function MarketsPage({
       </div>
 
       {(message || error) && (
-        <div className="fixed bottom-6 right-6 z-50 max-w-sm rounded-2xl shadow-xl border p-4 bg-white/95 backdrop-blur-md animate-in fade-in slide-in-from-bottom-5 duration-300">
-          <div className="flex items-start gap-3">
-            <div
-              className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-white ${
-                error
-                  ? "bg-red-500"
-                  : depositing
-                    ? "bg-stone-900"
-                    : "bg-emerald-500"
-              }`}
-            >
-              {error ? (
-                "!"
-              ) : depositing ? (
-                <Loader2 className="h-3 w-3 animate-spin text-white" />
-              ) : (
-                "✓"
-              )}
-            </div>
-            <div className="flex-1">
-              <p
-                className={`text-xs font-bold ${error ? "text-red-950" : "text-emerald-950"}`}
-              >
-                {error
-                  ? "System Alert"
-                  : depositing
-                    ? "In Progress"
-                    : "Process Update"}
-              </p>
-              <p className="mt-1 text-xs leading-5 text-stone-600">
-                {error || message}
-              </p>
-            </div>
-            <button
-              onClick={() => {
-                setError("");
-                setMessage("");
-              }}
-              className="text-stone-400 hover:text-stone-600 transition shrink-0 ml-1"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
+        <StatusToast
+          tone={error ? "error" : "success"}
+          message={error || message}
+          onDismiss={() => {
+            setError("");
+            setMessage("");
+          }}
+        />
       )}
     </div>
   );

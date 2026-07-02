@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Bell, Check, Globe, Loader2, Lock, BarChart3 } from "lucide-react";
+import { useWalletRealtimeEvent } from "./WalletRealtimeProvider";
 
 interface NotificationView {
   id: string;
@@ -55,6 +56,23 @@ function severityClass(severity: NotificationView["severity"]) {
   return "bg-stone-900";
 }
 
+const NOTIFICATION_RELEVANT_EVENT_TYPES = new Set([
+  "private_note_received",
+  "spend_job_completed",
+  "private_payment_sent",
+  "payment_request_created",
+  "payment_request_received",
+  "payment_request_paid",
+  "contact_request_received",
+  "contact_request_accepted",
+  "market_deposit_confirmed",
+  "market_withdraw_confirmed",
+  "market_bet_confirmed",
+  "market_payout_ready",
+  "market_payout_claimed",
+  "market_payout_failed",
+]);
+
 export default function TopHeader({
   mode,
   onChangeMode,
@@ -67,37 +85,56 @@ export default function TopHeader({
 }: TopHeaderProps) {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notifications, setNotifications] =
-    useState<NotificationView[]>(initialNotifications);
+    useState<NotificationView[]>(() =>
+      initialNotifications.filter((notification) => notification.readAt === null),
+    );
   const [loadingNotifications, setLoadingNotifications] = useState(false);
   const [notificationError, setNotificationError] = useState("");
+  const [unreadCountOverride, setUnreadCountOverride] = useState<number | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const notificationRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    setNotifications(initialNotifications);
+    setNotifications(initialNotifications.filter((notification) => notification.readAt === null));
   }, [initialNotifications]);
+
+  useEffect(() => {
+    setUnreadCountOverride(null);
+  }, [notificationUnreadCount]);
 
   const unreadNotifications = useMemo(
     () => notifications.filter((notification) => notification.readAt === null),
     [notifications],
   );
   const visibleUnreadCount =
-    notificationUnreadCount || unreadNotifications.length;
+    unreadCountOverride ?? (notificationUnreadCount || unreadNotifications.length);
 
-  const refreshNotifications = async () => {
+  const refreshNotifications = useCallback(async () => {
     setLoadingNotifications(true);
     setNotificationError("");
     try {
       const data = await parseResponse<{ notifications: NotificationView[] }>(
-        await fetch("/api/wallet/notifications?limit=20", {
+        await fetch("/api/wallet/notifications?limit=20&unreadOnly=true", {
           cache: "no-store",
         }),
       );
-      setNotifications(data.notifications);
+      const unread = data.notifications.filter((notification) => notification.readAt === null);
+      setNotifications(unread);
+      setUnreadCountOverride(unread.length);
     } catch (err) {
       setNotificationError(String(err));
     } finally {
       setLoadingNotifications(false);
     }
-  };
+  }, []);
+
+  const scheduleNotificationsRefresh = useCallback(() => {
+    if (notificationRefreshTimer.current) return;
+    notificationRefreshTimer.current = setTimeout(() => {
+      notificationRefreshTimer.current = null;
+      void refreshNotifications();
+    }, 500);
+  }, [refreshNotifications]);
 
   const markNotificationsRead = async () => {
     const unreadIds = notifications
@@ -121,9 +158,10 @@ export default function TopHeader({
         ]),
       );
       setNotifications((current) =>
-        current.map(
-          (notification) => readById.get(notification.id) ?? notification,
-        ),
+        current.filter((notification) => !readById.has(notification.id)),
+      );
+      setUnreadCountOverride((current) =>
+        Math.max(0, (current ?? unreadNotifications.length) - readById.size),
       );
       onNotificationsRead?.();
     } catch (err) {
@@ -140,6 +178,39 @@ export default function TopHeader({
       await refreshNotifications();
     }
   };
+
+  useEffect(() => {
+    if (!notificationsOpen) return undefined;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && popoverRef.current?.contains(target)) return;
+      setNotificationsOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [notificationsOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (notificationRefreshTimer.current) {
+        clearTimeout(notificationRefreshTimer.current);
+        notificationRefreshTimer.current = null;
+      }
+    };
+  }, []);
+
+  useWalletRealtimeEvent(
+    useCallback(
+      (event) => {
+        if (event.event !== "wallet_activity") return;
+        const eventType = String(event.data.eventType ?? "");
+        if (NOTIFICATION_RELEVANT_EVENT_TYPES.has(eventType)) {
+          scheduleNotificationsRefresh();
+        }
+      },
+      [scheduleNotificationsRefresh],
+    ),
+  );
 
   return (
     <header className="sticky top-0 z-30 border-b border-stone-200/60 bg-white/80 backdrop-blur-xl shrink-0">
@@ -202,7 +273,7 @@ export default function TopHeader({
           </div>
 
           {/* User Profile Area */}
-          <div className="relative">
+          <div className="relative" ref={popoverRef}>
             <button
               type="button"
               onClick={() => void toggleNotifications()}

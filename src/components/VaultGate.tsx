@@ -163,6 +163,7 @@ export default function VaultGate({ children, prepareWallet }: VaultGateProps) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [actionPending, setActionPending] = useState(false);
+  const [activeAction, setActiveAction] = useState<"unlock" | "create" | "recover" | "reset" | "fund" | "register" | null>(null);
   const [registrationStatus, setRegistrationStatus] = useState<RegistrationStatus | null>(null);
   const [registrationChecking, setRegistrationChecking] = useState(false);
   const [rememberedVaultChecked, setRememberedVaultChecked] = useState(false);
@@ -292,6 +293,7 @@ export default function VaultGate({ children, prepareWallet }: VaultGateProps) {
     setRegistrationStatus(null);
     setMessage("Reserving VEIL ID...");
     setActionPending(true);
+    setActiveAction("create");
     try {
       const profileRes = await fetch("/api/wallet/profile", {
         method: "PATCH",
@@ -321,6 +323,7 @@ export default function VaultGate({ children, prepareWallet }: VaultGateProps) {
       setMessage("");
     } finally {
       setActionPending(false);
+      setActiveAction(null);
     }
   }
 
@@ -330,6 +333,7 @@ export default function VaultGate({ children, prepareWallet }: VaultGateProps) {
     setError("");
     setRegistrationStatus(null);
     setActionPending(true);
+    setActiveAction("unlock");
     try {
       const unlocked = await decryptVaultWithPassword(toVault(remoteVault), password);
       if (keepUnlockedForTab) {
@@ -348,6 +352,7 @@ export default function VaultGate({ children, prepareWallet }: VaultGateProps) {
       setError(String(err));
     } finally {
       setActionPending(false);
+      setActiveAction(null);
     }
   }
 
@@ -357,6 +362,7 @@ export default function VaultGate({ children, prepareWallet }: VaultGateProps) {
     setError("");
     setRegistrationStatus(null);
     setActionPending(true);
+    setActiveAction("recover");
     try {
       const restored = await decryptVaultWithRecoveryKey(
         toVault(remoteVault, undefined, recoveryKey),
@@ -384,6 +390,7 @@ export default function VaultGate({ children, prepareWallet }: VaultGateProps) {
       setError(String(err));
     } finally {
       setActionPending(false);
+      setActiveAction(null);
     }
   }
 
@@ -414,6 +421,7 @@ export default function VaultGate({ children, prepareWallet }: VaultGateProps) {
     }
     setError("");
     setActionPending(true);
+    setActiveAction("reset");
     try {
       const res = await fetch("/api/wallet/vault", { method: "DELETE" });
       if (!res.ok) {
@@ -434,6 +442,7 @@ export default function VaultGate({ children, prepareWallet }: VaultGateProps) {
       setMessage("Encrypted vault reset.");
     } finally {
       setActionPending(false);
+      setActiveAction(null);
     }
   }, [resetWalletPreparation]);
 
@@ -468,6 +477,7 @@ export default function VaultGate({ children, prepareWallet }: VaultGateProps) {
   async function fundRegistrationAccount() {
     if (!wallet) return;
     setActionPending(true);
+    setActiveAction("fund");
     setError("");
     setMessage("Funding wallet account on testnet...");
     try {
@@ -486,12 +496,14 @@ export default function VaultGate({ children, prepareWallet }: VaultGateProps) {
       setMessage("");
     } finally {
       setActionPending(false);
+      setActiveAction(null);
     }
   }
 
   async function registerWalletInPool() {
     if (!wallet) return;
     setActionPending(true);
+    setActiveAction("register");
     setError("");
     setMessage("Preparing ASP membership registration...");
     try {
@@ -533,12 +545,13 @@ export default function VaultGate({ children, prepareWallet }: VaultGateProps) {
         throw new Error(submitted?.error ?? `Registration submit failed: HTTP ${submitRes.status}`);
       }
       await loadRegistrationStatus();
-      setMessage("Wallet registered in pool.");
+      setMessage("Private wallet enabled.");
     } catch (err) {
       setError(String(err));
       setMessage("");
     } finally {
       setActionPending(false);
+      setActiveAction(null);
     }
   }
 
@@ -972,7 +985,7 @@ export default function VaultGate({ children, prepareWallet }: VaultGateProps) {
                   />
                 </div>
                  <button className={`${primaryButtonClass} w-full`} disabled={actionPending}>
-                  {actionPending ? (
+                  {activeAction === "create" ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                       <span>Creating vault...</span>
@@ -1021,7 +1034,7 @@ export default function VaultGate({ children, prepareWallet }: VaultGateProps) {
                 </div>
                 <div className="flex flex-col gap-3">
                   <button className={`${primaryButtonClass} w-full`} disabled={actionPending}>
-                    {actionPending ? (
+                    {activeAction === "recover" ? (
                       <>
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                         <span>Resetting password...</span>
@@ -1079,7 +1092,7 @@ export default function VaultGate({ children, prepareWallet }: VaultGateProps) {
                 </label>
                 <div className="flex flex-col gap-3">
                   <button className={`${primaryButtonClass} w-full`} disabled={actionPending}>
-                    {actionPending ? (
+                    {activeAction === "unlock" ? (
                       <>
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                         <span>Unlocking...</span>
@@ -1163,12 +1176,12 @@ export default function VaultGate({ children, prepareWallet }: VaultGateProps) {
               </span>
             </motion.div>
             <motion.div variants={itemVariants}>
-              <h1 className="hero-heading">Pool Check</h1>
-              <p className="hero-desc">Confirming your public registration before opening the wallet.</p>
+              <h1 className="hero-heading">Wallet Check</h1>
+              <p className="hero-desc">Confirming private payment access before opening the wallet.</p>
             </motion.div>
             <motion.div className="steps-container" variants={itemVariants}>
               <StepItem number={1} text="Unlock encrypted vault" />
-              <StepItem number={2} text="Check pool membership" active />
+              <StepItem number={2} text="Check private access" active />
               <StepItem number={3} text="Open wallet" />
             </motion.div>
           </motion.div>
@@ -1183,9 +1196,9 @@ export default function VaultGate({ children, prepareWallet }: VaultGateProps) {
             style={{ maxWidth: "28rem" }}
           >
             <div>
-              <h2 className="form-header-title">Checking pool registration</h2>
+              <h2 className="form-header-title">Checking private access</h2>
               <p className="form-header-desc">
-                Veil is confirming whether this wallet is already registered for private note payments.
+                Veil is confirming whether this wallet is ready for private payments.
               </p>
             </div>
 
@@ -1218,7 +1231,7 @@ export default function VaultGate({ children, prepareWallet }: VaultGateProps) {
                 disabled={actionPending}
                 type="button"
               >
-                {actionPending ? (
+                {registrationChecking ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     <span>Checking...</span>
@@ -1267,13 +1280,13 @@ export default function VaultGate({ children, prepareWallet }: VaultGateProps) {
               </span>
             </motion.div>
             <motion.div variants={itemVariants}>
-              <h1 className="hero-heading">Pool Register</h1>
-              <p className="hero-desc">Publish your public receive keys before private note payments.</p>
+              <h1 className="hero-heading">Private Access</h1>
+              <p className="hero-desc">Enable private payments for this wallet.</p>
             </motion.div>
             <motion.div className="steps-container" variants={itemVariants}>
               <StepItem number={1} text="Create encrypted vault" />
               <StepItem number={2} text="Save recovery key" />
-              <StepItem number={3} text="Register wallet in pool" active />
+              <StepItem number={3} text="Enable private wallet" active />
             </motion.div>
           </motion.div>
         </div>
@@ -1286,7 +1299,7 @@ export default function VaultGate({ children, prepareWallet }: VaultGateProps) {
             transition={{ duration: 0.55 }}
           >
             <div>
-              <h2 className="form-header-title">Register wallet in pool</h2>
+              <h2 className="form-header-title">Enable private wallet</h2>
               <p className="form-header-desc">
                 This publishes only public receive keys so other VEIL users can send private notes to your wallet.
               </p>
@@ -1319,7 +1332,7 @@ export default function VaultGate({ children, prepareWallet }: VaultGateProps) {
                 onClick={() => void fundRegistrationAccount()}
                 type="button"
               >
-                {actionPending ? (
+                {activeAction === "fund" ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     <span>Funding...</span>
@@ -1334,13 +1347,13 @@ export default function VaultGate({ children, prepareWallet }: VaultGateProps) {
                 onClick={() => void registerWalletInPool()}
                 type="button"
               >
-                {actionPending ? (
+                {activeAction === "register" ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     <span>Registering...</span>
                   </>
                 ) : (
-                  <span>Register in pool</span>
+                  <span>Enable private wallet</span>
                 )}
               </button>
             </div>
@@ -1402,7 +1415,7 @@ export default function VaultGate({ children, prepareWallet }: VaultGateProps) {
             </motion.div>
             <motion.div className="steps-container" variants={itemVariants}>
               <StepItem number={1} text="Unlock encrypted vault" />
-              <StepItem number={2} text="Check pool membership" />
+              <StepItem number={2} text="Check private access" />
               <StepItem number={3} text="Loading wallet" active />
             </motion.div>
           </motion.div>

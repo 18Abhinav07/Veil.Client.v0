@@ -19,7 +19,7 @@ Market pool:
 - `MARKET_POOL_CONTRACT_ID`: deployed market pool contract id. Use the market pool, not the wallet pool.
 - `NEXT_PUBLIC_MARKET_POOL_CONTRACT_ID`: optional browser-visible mirror when needed by client code.
 - `MARKET_POOL_DEPLOYMENT_LEDGER`: deployment ledger used for event indexing.
-- `MARKET_POOL_TREE_DEPTH`: defaults to `10` for the currently deployed circuit. Do not set `15` until a matching 15-depth circuit, proving key, verifier, prover, and relayer stack is deployed.
+- `MARKET_POOL_TREE_DEPTH`: defaults to `10` for the currently deployed circuit. Do not change it until a matching deeper circuit, proving key, verifier, prover, and relayer stack is deployed.
 - `MARKET_POOL_DEPLOYER_KEY_ID`: non-secret identifier for the deployer key. Reuse the previous wallet-pool deployer key policy without exposing secret material.
 
 Market escrow keys:

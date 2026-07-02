@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { decimalToStellarUnits, formatStellarUnits, type PublicWalletState } from "@/lib/publicWalletCore";
 import type { WalletSecrets } from "@/lib/vaultCrypto";
@@ -11,6 +11,8 @@ import {
   type PrivateNoteSecrets,
 } from "@/lib/noteCrypto";
 import { signStellarPayload } from "@/lib/walletSigner";
+import StatusToast from "./StatusToast";
+import { useWalletRealtimeEvent } from "./WalletRealtimeProvider";
 import { 
   ArrowDownLeft, 
   ArrowUpRight, 
@@ -30,8 +32,10 @@ import {
 
 const POOL_ID =
   process.env.NEXT_PUBLIC_POOL_ID ??
-  "CA2LFUXWJB73N3VKKLOMDNTXHTZ2WUF5KATU424WWKTTBDJZ6EJFJEM4";
+  "CDEB3AIFRAGHGPLM24EDHHETSH4Y4L4NAYGSHHW7MQWXUQ65G7LEDBFY";
 const MAX_INTERACTIVE_RECIPIENTS = 5;
+const PRIVATE_SPEND_UNLOAD_MESSAGE =
+  "Private transaction in progress. Please wait until the current private transfer finishes before refreshing.";
 
 interface PrivateDashboardProps {
   wallet: WalletSecrets;
@@ -332,11 +336,31 @@ export default function PrivateDashboard({
   const [refreshing, setRefreshing] = useState(false);
   const [depositing, setDepositing] = useState(false);
   const [spending, setSpending] = useState(false);
+  const [interactiveSpendInFlight, setInteractiveSpendInFlight] = useState(false);
   const [finalizingDepositId, setFinalizingDepositId] = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
+  const firstRefreshDoneRef = useRef(false);
+  const realtimeRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const interactiveSpendInFlightRef = useRef(false);
 
   const busy = refreshing || depositing || spending || finalizingDepositId !== null;
+
+  const markInteractiveSpendInFlight = (active: boolean) => {
+    interactiveSpendInFlightRef.current = active;
+    setInteractiveSpendInFlight(active);
+  };
+
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!interactiveSpendInFlightRef.current) return;
+      event.preventDefault();
+      event.returnValue = PRIVATE_SPEND_UNLOAD_MESSAGE;
+      return PRIVATE_SPEND_UNLOAD_MESSAGE;
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, []);
   
   // Public USDC balance state
   const [publicUsdcUnits, setPublicUsdcUnits] = useState(initialPublicAccount?.usdcUnits ?? "0");
@@ -538,9 +562,44 @@ export default function PrivateDashboard({
   }, [initialPublicAccount]);
 
   useEffect(() => {
-    if (initialNotes !== undefined && initialPublicAccount !== undefined) return;
+    if (firstRefreshDoneRef.current) return;
+    firstRefreshDoneRef.current = true;
     void refreshAll();
-  }, [initialNotes, initialPublicAccount, refreshAll]);
+  }, [refreshAll]);
+
+  const scheduleRealtimeRefresh = useCallback(() => {
+    if (realtimeRefreshTimer.current) return;
+    realtimeRefreshTimer.current = setTimeout(() => {
+      realtimeRefreshTimer.current = null;
+      void refreshAll();
+    }, 700);
+  }, [refreshAll]);
+
+  useEffect(() => {
+    return () => {
+      if (realtimeRefreshTimer.current) {
+        clearTimeout(realtimeRefreshTimer.current);
+        realtimeRefreshTimer.current = null;
+      }
+    };
+  }, []);
+
+  useWalletRealtimeEvent(
+    useCallback(
+      (event) => {
+        if (event.event !== "wallet_activity") return;
+        const eventType = String(event.data.eventType ?? "");
+        if (
+          eventType === "private_note_received" ||
+          eventType === "spend_job_completed" ||
+          eventType === "spend_job_step_confirmed"
+        ) {
+          scheduleRealtimeRefresh();
+        }
+      },
+      [scheduleRealtimeRefresh],
+    ),
+  );
 
   const refreshContacts = useCallback(async () => {
     try {
@@ -815,15 +874,16 @@ export default function PrivateDashboard({
       const encryptedChange = await encryptPrivateNote(proved.result.changeNote, wallet);
       setStatusMsg(`Relaying step ${proved.result.ordinal} output...`);
       const submitted = await parseResponse<SubmitResult>(
-        await fetch(`/api/wallet/private/spend-jobs/${jobId}/advance`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            intent: "submit",
-            stepId: proved.result.stepId,
-            encryptedChangeNoteCiphertext: JSON.stringify(encryptedChange),
+          await fetch(`/api/wallet/private/spend-jobs/${jobId}/advance`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              intent: "submit",
+              stepId: proved.result.stepId,
+              expectedOutputCommitmentHex: proved.result.changeNote.commitmentHex,
+              encryptedChangeNoteCiphertext: JSON.stringify(encryptedChange),
+            }),
           }),
-        }),
       );
 
       currentNote = {
@@ -893,6 +953,9 @@ export default function PrivateDashboard({
         return;
       }
       setBackgroundBatchPrompt(null);
+      if (!useBackgroundWorker) {
+        markInteractiveSpendInFlight(true);
+      }
 
       const created = await parseResponse<{ job: SpendJobView }>(
         await fetch("/api/wallet/private/spend-jobs", {
@@ -935,6 +998,7 @@ export default function PrivateDashboard({
       setStatusMsg("");
       await refreshAll().catch(() => undefined);
     } finally {
+      markInteractiveSpendInFlight(false);
       setSpending(false);
     }
   };
@@ -1411,7 +1475,7 @@ export default function PrivateDashboard({
                         : "text-stone-500 hover:text-stone-850"
                     }`}
                   >
-                    Direct-2-Wallet
+                    Public wallet
                   </button>
                   <button
                     type="button"
@@ -1425,7 +1489,7 @@ export default function PrivateDashboard({
                         : "text-stone-500 hover:text-stone-850"
                     }`}
                   >
-                    Note-2-Note
+                    Private transfer
                   </button>
                 </div>
                 
@@ -1455,7 +1519,7 @@ export default function PrivateDashboard({
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-stone-400">
-                      {sendMode === "lane2" ? "Note-2-Note recipient" : "Direct-2-Wallet recipients"}
+                      {sendMode === "lane2" ? "Private recipient" : "Wallet recipients"}
                     </span>
                     {sendMode === "lane1" && (
                       <button 
@@ -1630,15 +1694,6 @@ export default function PrivateDashboard({
                   ))}
                 </div>
 
-                <div className="rounded-lg bg-indigo-50/40 p-3.5 text-xs leading-relaxed text-indigo-950 flex gap-2">
-                  <Info size={14} className="shrink-0 mt-0.5 text-indigo-750" />
-                  <span>
-                    {sendMode === "lane2"
-                      ? "Note-2-Note transfer. On-chain recipient and amount stay inside the pool; VEIL stores an encrypted incoming note for the recipient."
-                      : "Direct-2-Wallet spend. Your public wallet is hidden, but the destination wallet address and withdrawal amount are public."}
-                  </span>
-                </div>
-
                 {/* SUBMIT BUTTON */}
                 <button
                   type="submit"
@@ -1651,7 +1706,7 @@ export default function PrivateDashboard({
                       <span>{statusMsg || "Executing ZK Proof..."}</span>
                     </>
                   ) : (
-                    <span>{sendMode === "lane2" ? "Send Note-2-Note" : "Send Direct-2-Wallet"}</span>
+                    <span>{sendMode === "lane2" ? "Send privately" : "Send to wallet"}</span>
                   )}
                 </button>
               </form>
@@ -1734,12 +1789,6 @@ export default function PrivateDashboard({
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-4 text-xs leading-5 text-indigo-950">
-                {backgroundBatchPrompt.mode === "lane2"
-                  ? "Note-2-Note privacy is preserved while VEIL processes each recipient in sequence."
-                  : "Direct-2-Wallet recipients and withdrawal amounts remain public, while your source wallet stays hidden."}
-              </div>
-
               <div className="flex gap-3 pt-1">
                 <button
                   type="button"
@@ -1773,34 +1822,35 @@ export default function PrivateDashboard({
         </div>
       )}
 
-      {/* Dynamic Toast Alert (Floated, high z-index, non-blocking) */}
-      {(statusMsg || errorMsg) && (
-        <div className="fixed bottom-6 right-6 z-50 max-w-sm rounded-2xl shadow-xl border p-4 bg-white/95 backdrop-blur-md animate-in fade-in slide-in-from-bottom-5 duration-300">
+      {interactiveSpendInFlight && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-6 right-6 z-50 w-[calc(100vw-32px)] max-w-[min(420px,calc(100vw-32px))] rounded-xl border border-stone-200 bg-white/95 p-4 shadow-xl shadow-stone-950/10 backdrop-blur-md"
+        >
           <div className="flex items-start gap-3">
-            <div className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-white ${
-              errorMsg ? "bg-red-650" : "bg-emerald-650"
-            }`}>
-              {errorMsg ? "!" : "✓"}
+            <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-stone-100 text-stone-900 ring-1 ring-stone-200">
+              <Loader2 className="h-4 w-4 animate-spin" />
             </div>
-            <div className="flex-1">
-              <p className={`text-xs font-bold ${errorMsg ? "text-red-950" : "text-emerald-950"}`}>
-                {errorMsg ? "System Alert" : "Process Update"}
-              </p>
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-stone-950">Private transaction in progress</p>
               <p className="mt-1 text-xs leading-5 text-stone-600">
-                {errorMsg || statusMsg}
+                Keep this tab open until the active private spend finishes. Refresh is blocked to avoid interrupting the local proof flow.
               </p>
             </div>
-            <button
-              onClick={() => {
-                setErrorMsg("");
-                setStatusMsg("");
-              }}
-              className="text-stone-400 hover:text-stone-600 transition shrink-0 ml-1"
-            >
-              ✕
-            </button>
           </div>
         </div>
+      )}
+
+      {(statusMsg || errorMsg) && (
+        <StatusToast
+          tone={errorMsg ? "error" : "success"}
+          message={errorMsg || statusMsg}
+          onDismiss={() => {
+            setErrorMsg("");
+            setStatusMsg("");
+          }}
+        />
       )}
 
     </div>

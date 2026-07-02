@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 
 import TopHeader from "@/components/unified/TopHeader";
+import StatusToast from "@/components/unified/StatusToast";
+import { useWalletRealtimeEvent } from "@/components/unified/WalletRealtimeProvider";
 
 import {
   decimalToStellarUnits,
@@ -26,6 +28,7 @@ import {
   type EncryptedPrivateNotePayload,
   type PrivateNoteSecrets,
 } from "@/lib/noteCrypto";
+import { decryptMarketOutputNote } from "@/lib/marketOutputNoteClient";
 import {
   computeParimutuelPositionValue,
   computeParimutuelQuoteForNewStake,
@@ -99,9 +102,27 @@ type MarketPortfolio = {
   payouts: MarketPayoutView[];
 };
 
+type NotificationView = {
+  id: string;
+  activityEventId: string | null;
+  type: string;
+  severity: "info" | "success" | "warning" | "error";
+  entityKind: string;
+  entityId: string | null;
+  title: string;
+  body: string | null;
+  actionUrl: string | null;
+  readAt: string | null;
+  seenAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type MarketDetailPayload = {
   market: MarketView;
   portfolio: MarketPortfolio;
+  notifications?: NotificationView[];
+  notificationUnreadCount?: number;
 };
 
 type MarketDetailPageProps = {
@@ -161,6 +182,41 @@ function parseResponse<T>(response: Response): Promise<T> {
     if (!response.ok) throw new Error(data?.error ?? `HTTP ${response.status}`);
     return data as T;
   });
+}
+
+async function decryptMarketUserNote(
+  note: MarketUserNoteView,
+  wallet: WalletSecrets,
+): Promise<PrivateNoteSecrets> {
+  try {
+    return await decryptPrivateNote(
+      JSON.parse(note.encryptedNoteCiphertext) as EncryptedPrivateNotePayload,
+      wallet,
+    );
+  } catch (error) {
+    if (note.source !== "payout") throw error;
+    if (note.leafIndex === null) {
+      throw new Error("Selected market note is not indexed yet.");
+    }
+    return decryptMarketOutputNote({
+      wallet,
+      commitmentHex: note.commitmentHex,
+      amountUnits: note.amountUnits,
+      leafIndex: note.leafIndex,
+      encryptedNoteCiphertext: note.encryptedNoteCiphertext,
+    });
+  }
+}
+
+function normalizeMarketUserNoteSecrets(
+  note: MarketUserNoteView,
+  secrets: PrivateNoteSecrets,
+): PrivateNoteSecrets {
+  return {
+    ...secrets,
+    amountUnits: note.amountUnits,
+    leafIndex: note.leafIndex ?? secrets.leafIndex,
+  };
 }
 
 function formatUsd(units: string) {
@@ -391,6 +447,8 @@ export default function MarketDetailPage({
     payouts: [],
   };
   const router = useRouter();
+  const marketRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastFocusRefreshRef = useRef(0);
   const initialSelectedNoteId =
     spendableMarketNotes(initialPortfolio.notes)[0]?.id ?? "";
   const [market, setMarket] = useState<MarketView | null>(
@@ -402,10 +460,15 @@ export default function MarketDetailPage({
   const [amount, setAmount] = useState("1");
   const [loading, setLoading] = useState(!initialData);
   const [submitting, setSubmitting] = useState(false);
-  const [claimingPayoutId, setClaimingPayoutId] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [detailTab, setDetailTab] = useState<DetailTab>("overview");
+  const [notifications, setNotifications] = useState<NotificationView[]>(
+    initialData?.notifications ?? [],
+  );
+  const [notificationUnreadCount, setNotificationUnreadCount] = useState(
+    initialData?.notificationUnreadCount ?? 0,
+  );
 
   const activeNotes = useMemo(
     () => spendableMarketNotes(portfolio.notes),
@@ -435,8 +498,8 @@ export default function MarketDetailPage({
     [market, portfolio.payouts],
   );
 
-  const loadMarket = async () => {
-    setLoading(true);
+  const loadMarket = useCallback(async (options?: { showLoading?: boolean }) => {
+    if (options?.showLoading !== false) setLoading(true);
     setError("");
     try {
       const payload = await parseResponse<MarketDetailPayload>(
@@ -449,20 +512,67 @@ export default function MarketDetailPage({
       );
       setMarket(payload.market);
       setPortfolio(payload.portfolio);
+      setNotifications(payload.notifications ?? []);
+      setNotificationUnreadCount(payload.notificationUnreadCount ?? 0);
       setSelectedNoteId((current) => current || spendableNotes[0]?.id || "");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (options?.showLoading !== false) setLoading(false);
     }
-  };
+  }, [slug]);
+
+  const scheduleMarketRefresh = useCallback(() => {
+    if (previewMode || marketRefreshTimer.current) return;
+    marketRefreshTimer.current = setTimeout(() => {
+      marketRefreshTimer.current = null;
+      void loadMarket({ showLoading: false });
+    }, 500);
+  }, [loadMarket, previewMode]);
 
   useEffect(() => {
     if (previewMode) return;
-    void loadMarket();
-    // Initial market detail bootstrap only; user can navigate back for another market.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [previewMode, slug]);
+    void loadMarket({ showLoading: true });
+  }, [loadMarket, previewMode]);
+
+  useEffect(() => {
+    return () => {
+      if (marketRefreshTimer.current) {
+        clearTimeout(marketRefreshTimer.current);
+        marketRefreshTimer.current = null;
+      }
+    };
+  }, []);
+
+  useWalletRealtimeEvent(
+    useCallback(
+      (event) => {
+        if (event.event !== "wallet_activity") return;
+        const eventType = String(event.data.eventType ?? "");
+        if (eventType.startsWith("market_")) scheduleMarketRefresh();
+      },
+      [scheduleMarketRefresh],
+    ),
+  );
+
+  useEffect(() => {
+    if (previewMode) return undefined;
+    const refreshIfStale = () => {
+      const now = Date.now();
+      if (now - lastFocusRefreshRef.current < 5000) return;
+      lastFocusRefreshRef.current = now;
+      scheduleMarketRefresh();
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") refreshIfStale();
+    };
+    window.addEventListener("focus", refreshIfStale);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      window.removeEventListener("focus", refreshIfStale);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [previewMode, scheduleMarketRefresh]);
 
   const submitBet = async () => {
     if (!market) return;
@@ -482,11 +592,9 @@ export default function MarketDetailPage({
           "Selected market note is missing encrypted spend material.",
         );
       }
-      const sourceNote = await decryptPrivateNote(
-        JSON.parse(
-          selectedNote.encryptedNoteCiphertext,
-        ) as EncryptedPrivateNotePayload,
-        wallet,
+      const sourceNote = normalizeMarketUserNoteSecrets(
+        selectedNote,
+        await decryptMarketUserNote(selectedNote, wallet),
       );
       if (sourceNote.leafIndex === null) {
         throw new Error("Selected market note is not indexed yet.");
@@ -638,59 +746,6 @@ export default function MarketDetailPage({
     }
   };
 
-  const claimMarketPayout = async (payout: MarketPayoutView) => {
-    if (
-      !payout.payoutCommitmentHex ||
-      !payout.encryptedNoteCiphertext ||
-      payout.leafIndex === null
-    ) {
-      setError("Payout output is not indexed yet.");
-      return;
-    }
-    setClaimingPayoutId(payout.id);
-    setError("");
-    setMessage("");
-    try {
-      const payload = await parseResponse<{
-        payout: MarketPayoutView;
-        note: MarketUserNoteView;
-      }>(
-        await fetch(
-          `/api/markets/payouts/${encodeURIComponent(payout.id)}/claim`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              commitmentHex: payout.payoutCommitmentHex,
-              encryptedNoteCiphertext: payout.encryptedNoteCiphertext,
-            }),
-          },
-        ),
-      );
-      const payoutNote: MarketUserNoteView = {
-        ...payload.note,
-        source: "payout",
-        status: "unspent",
-      };
-      setPortfolio((current) => ({
-        ...current,
-        payouts: current.payouts.map((item) =>
-          item.id === payout.id ? payload.payout : item,
-        ),
-        notes: [
-          payoutNote,
-          ...current.notes.filter((note) => note.id !== payoutNote.id),
-        ],
-      }));
-      setSelectedNoteId(payoutNote.id);
-      setMessage("Payout claimed into a spendable market note.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setClaimingPayoutId("");
-    }
-  };
-
   const totalMarketBalance = activeNotes
     .reduce((total, item) => total + BigInt(item.amountUnits || "0"), BigInt(0))
     .toString();
@@ -736,7 +791,7 @@ export default function MarketDetailPage({
     : !isMarketOpen(market)
       ? "Market is closed"
       : !market.poolActive
-        ? "Market pool contract pending"
+        ? "Market setup pending"
         : !selectedNote
           ? "Deposit from Portfolio to get Market Notes"
           : !hasAmount
@@ -819,7 +874,9 @@ export default function MarketDetailPage({
           }}
           title={market?.category ?? "Market"}
           accountEmail={accountEmail}
-          initialNotifications={[]}
+          initialNotifications={notifications}
+          notificationUnreadCount={notificationUnreadCount}
+          onNotificationsRead={() => setNotificationUnreadCount(0)}
         />
 
         <main className="flex-1 overflow-y-auto no-scrollbar p-4 md:p-6 pb-24 md:pb-6">
@@ -924,12 +981,12 @@ export default function MarketDetailPage({
                     <section className="min-h-[260px]">
                       {detailTab === "overview" && (
                         <div className="grid gap-6 md:grid-cols-2">
-                          <div className="border-y border-stone-200/80 py-5">
+                          <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-stone-100">
                             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-stone-400">
                               Outcome pricing
                             </p>
                             <div className="mt-5 space-y-4">
-                              <div className="flex items-center justify-between gap-4">
+                              <div className="flex items-center justify-between gap-4 rounded-2xl bg-stone-50/70 px-3 py-3">
                                 <span className="inline-flex items-center gap-2 text-sm font-bold text-stone-950">
                                   <ArrowUpRight className="h-4 w-4" />
                                   YES
@@ -945,7 +1002,7 @@ export default function MarketDetailPage({
                                   </span>
                                 </span>
                               </div>
-                              <div className="flex items-center justify-between gap-4 border-t border-stone-200/80 pt-4">
+                              <div className="flex items-center justify-between gap-4 rounded-2xl bg-stone-50/70 px-3 py-3">
                                 <span className="inline-flex items-center gap-2 text-sm font-bold text-stone-950">
                                   <ArrowDownRight className="h-4 w-4" />
                                   NO
@@ -963,7 +1020,7 @@ export default function MarketDetailPage({
                               </div>
                             </div>
                           </div>
-                          <div className="border-y border-stone-200/80 py-5">
+                          <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-stone-100">
                             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-stone-400">
                               Resolution
                             </p>
@@ -980,7 +1037,7 @@ export default function MarketDetailPage({
 
                       {detailTab === "rules" && (
                         <div className="grid gap-6 md:grid-cols-2">
-                          <div className="border-y border-stone-200/80 py-5">
+                          <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-stone-100">
                             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-stone-400">
                               Rules
                             </p>
@@ -988,7 +1045,7 @@ export default function MarketDetailPage({
                               {market.rules}
                             </p>
                           </div>
-                          <div className="border-y border-stone-200/80 py-5">
+                          <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-stone-100">
                             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-stone-400">
                               Resolution source
                             </p>
@@ -1003,7 +1060,7 @@ export default function MarketDetailPage({
                       )}
 
                       {detailTab === "positions" && (
-                        <div className="border-y border-stone-200/80">
+                        <div className="rounded-3xl bg-white p-3 shadow-sm ring-1 ring-stone-100">
                           {marketBets.length === 0 ? (
                             <div className="py-12 text-center">
                               <p className="text-sm font-bold text-stone-950">
@@ -1014,7 +1071,7 @@ export default function MarketDetailPage({
                               </p>
                             </div>
                           ) : (
-                            <div className="divide-y divide-stone-200/80">
+                            <div className="divide-y divide-stone-100">
                               {marketBets.map((bet) => {
                                 const quote = marketPositionQuote(bet, market);
                                 const pending =
@@ -1023,7 +1080,7 @@ export default function MarketDetailPage({
                                 return (
                                   <div
                                     key={bet.id}
-                                    className="grid gap-3 py-4 sm:grid-cols-[minmax(0,1fr)_minmax(120px,auto)_minmax(130px,auto)] sm:items-center"
+                                    className="grid gap-3 rounded-2xl px-3 py-3 transition hover:bg-stone-50/70 sm:grid-cols-[minmax(0,1fr)_minmax(120px,auto)_minmax(130px,auto)] sm:items-center"
                                   >
                                     <span>
                                       <span className="block text-sm font-bold text-stone-950">
@@ -1072,7 +1129,7 @@ export default function MarketDetailPage({
                       {detailTab === "notes" && (
                         <div className="market-note-card-grid">
                           {activeNotes.length === 0 ? (
-                            <div className="py-12 text-center">
+                            <div className="rounded-3xl bg-white px-6 py-12 text-center shadow-sm ring-1 ring-stone-100">
                               <p className="text-sm font-bold text-stone-950">
                                 No spendable Market Notes.
                               </p>
@@ -1097,7 +1154,7 @@ export default function MarketDetailPage({
                       )}
 
                       {detailTab === "payouts" && (
-                        <div className="border-y border-stone-200/80">
+                        <div className="rounded-3xl bg-white p-3 shadow-sm ring-1 ring-stone-100">
                           {marketPayouts.length === 0 ? (
                             <div className="py-12 text-center">
                               <p className="text-sm font-bold text-stone-950">
@@ -1108,7 +1165,7 @@ export default function MarketDetailPage({
                               </p>
                             </div>
                           ) : (
-                            <div className="divide-y divide-stone-200/80">
+                            <div className="divide-y divide-stone-100">
                               {marketPayouts.map((payout) => {
                                 const ready =
                                   payout.status === "confirmed" &&
@@ -1119,7 +1176,7 @@ export default function MarketDetailPage({
                                 return (
                                   <div
                                     key={payout.id}
-                                    className="flex items-center justify-between gap-4 py-4"
+                                    className="flex items-center justify-between gap-4 rounded-2xl px-3 py-3 transition hover:bg-stone-50/70"
                                   >
                                     <span>
                                       <span className="block text-sm font-bold text-stone-950">
@@ -1137,20 +1194,12 @@ export default function MarketDetailPage({
                                         Claimed
                                       </span>
                                     ) : ready ? (
-                                      <button
-                                        className="rounded-full bg-stone-950 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white transition hover:bg-stone-800 disabled:opacity-60"
-                                        disabled={
-                                          claimingPayoutId === payout.id
-                                        }
-                                        onClick={() =>
-                                          void claimMarketPayout(payout)
-                                        }
-                                        type="button"
+                                      <Link
+                                        className="rounded-full bg-stone-950 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white transition hover:bg-stone-800"
+                                        href="/market?view=portfolio&tab=payouts"
                                       >
-                                        {claimingPayoutId === payout.id
-                                          ? "Claiming"
-                                          : "Claim payout"}
-                                      </button>
+                                        Claim in Portfolio
+                                      </Link>
                                     ) : (
                                       <span className="rounded-full bg-stone-100 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-stone-500">
                                         Awaiting payout note
@@ -1169,13 +1218,13 @@ export default function MarketDetailPage({
                   <aside className="market-action-panel flex min-w-0 max-w-full flex-col overflow-x-hidden lg:sticky lg:top-5 lg:self-start">
                     <div
                       id="market-bet-panel"
-                      className="scroll-mt-5 border-y border-stone-200/80 py-5 md:py-6"
+                      className="scroll-mt-5 rounded-3xl bg-white p-5 shadow-sm ring-1 ring-stone-100 md:p-6"
                     >
                       <div>
                         <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-stone-400">
                           Trade ticket
                         </p>
-                        <h3 className="mt-1 text-2xl font-bold tracking-tight text-stone-950">
+                        <h3 className="mt-1 text-xl font-bold tracking-tight text-stone-950">
                           Place private bet
                         </h3>
                         <p className="mt-2 text-sm font-semibold leading-6 text-stone-600">
@@ -1240,7 +1289,7 @@ export default function MarketDetailPage({
                             Amount
                           </span>
                           <input
-                            className="mt-2 h-12 w-full min-w-0 border-b border-stone-200 bg-transparent px-1 text-base font-bold text-stone-950 outline-none transition focus:border-stone-900"
+                            className="mt-2 h-11 w-full min-w-0 border-b border-stone-200 bg-transparent px-1 text-sm font-bold text-stone-950 outline-none transition focus:border-stone-900"
                             min="0.0000001"
                             onChange={(event) => setAmount(event.target.value)}
                             step="0.0000001"
@@ -1291,7 +1340,7 @@ export default function MarketDetailPage({
                         )}
                       </div>
 
-                      <div className="mt-6 space-y-3 border-y border-stone-200/80 py-4">
+                      <div className="mt-6 space-y-3 rounded-2xl bg-stone-50/70 px-3 py-3">
                         <div className="flex items-center justify-between gap-3">
                           <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-stone-400">
                             Projected payout
@@ -1335,7 +1384,7 @@ export default function MarketDetailPage({
                           ? "Placing Private Bet..."
                           : market.poolActive
                             ? "Place Private Bet"
-                            : "Market Pool Pending"}
+                            : "Market Setup Pending"}
                       </button>
                       {disabledReason && (
                         <p className="mt-3 text-center text-xs font-bold text-stone-500">
@@ -1352,50 +1401,14 @@ export default function MarketDetailPage({
       </div>
 
       {(message || error) && (
-        <div className="fixed bottom-6 right-6 z-50 max-w-sm rounded-2xl shadow-xl border p-4 bg-white/95 backdrop-blur-md animate-in fade-in slide-in-from-bottom-5 duration-300">
-          <div className="flex items-start gap-3">
-            <div
-              className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-white ${
-                error
-                  ? "bg-red-500"
-                  : submitting || claimingPayoutId
-                    ? "bg-stone-900"
-                    : "bg-emerald-500"
-              }`}
-            >
-              {error ? (
-                "!"
-              ) : submitting || claimingPayoutId ? (
-                <Loader2 className="h-3 w-3 animate-spin text-white" />
-              ) : (
-                "✓"
-              )}
-            </div>
-            <div className="flex-1">
-              <p
-                className={`text-xs font-bold ${error ? "text-red-950" : "text-emerald-950"}`}
-              >
-                {error
-                  ? "System Alert"
-                  : submitting || claimingPayoutId
-                    ? "In Progress"
-                    : "Process Update"}
-              </p>
-              <p className="mt-1 text-xs leading-5 text-stone-600">
-                {error || message}
-              </p>
-            </div>
-            <button
-              onClick={() => {
-                setError("");
-                setMessage("");
-              }}
-              className="text-stone-400 hover:text-stone-600 transition shrink-0 ml-1"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
+        <StatusToast
+          tone={error ? "error" : "success"}
+          message={error || message}
+          onDismiss={() => {
+            setError("");
+            setMessage("");
+          }}
+        />
       )}
     </div>
   );

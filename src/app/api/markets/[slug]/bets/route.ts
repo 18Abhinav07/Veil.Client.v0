@@ -25,6 +25,7 @@ import {
   type PredictionMarketRow,
   type QueryClient,
 } from "@/lib/server/markets/marketRepository";
+import { emitMarketUserNotification } from "@/lib/server/markets/marketNotifications";
 import { serializeMarketBet } from "@/lib/server/markets/marketSerialization";
 import { getWalletServerEnv } from "@/lib/server/serverEnv";
 import type { MarketOutcome } from "@/lib/server/markets/marketTypes";
@@ -152,7 +153,7 @@ function marketPoolFromRow(market: PredictionMarketRow): MarketPoolConfig {
     readEnv(SERVER_ENV.MARKET_POOL_CONTRACT_ID) ??
     readEnv(SERVER_ENV.NEXT_PUBLIC_MARKET_POOL_CONTRACT_ID);
   if (market.pool_status !== "active" || !contractId) {
-    throw new Error("Market pool contract is not active for betting");
+    throw new Error("Market setup is not active for betting");
   }
   return {
     poolId: market.pool_id,
@@ -400,6 +401,24 @@ async function confirmIndexedBet(input: {
       changeLeafIndex,
     },
     txHash: input.txHash,
+  });
+  await emitMarketUserNotification(input.db, {
+    userId: input.userId,
+    eventType: "market_bet_confirmed",
+    marketId: bet.market_id,
+    marketSlug: input.slug,
+    betId: bet.id,
+    entityKind: "market_bet",
+    entityId: bet.id,
+    amountUnits: String(bet.amount_units),
+    title: "Market bet confirmed",
+    actionUrl: `/market/${input.slug}`,
+    txHash: input.txHash,
+    eventData: {
+      outcome: bet.outcome,
+      escrowLeafIndex,
+      changeLeafIndex,
+    },
   });
 
   return NextResponse.json({

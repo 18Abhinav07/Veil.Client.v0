@@ -42,6 +42,14 @@ export async function POST(
   if (!detail) {
     return NextResponse.json({ error: "Spend job not found" }, { status: 404 });
   }
+  const serializedDetail = serializeSpendJobDetail(detail);
+  if (serializedDetail.job.status === "completed") {
+    return NextResponse.json({
+      job: serializedDetail,
+      reconciledStepId: null,
+      alreadyComplete: true,
+    });
+  }
 
   const step = detail.steps.find(
     (item) =>

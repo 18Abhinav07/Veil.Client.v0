@@ -15,6 +15,7 @@ import {
   createMarketDepositNote,
   recordMarketActivity,
 } from "@/lib/server/markets/marketRepository";
+import { emitMarketUserNotification } from "@/lib/server/markets/marketNotifications";
 import { serializeMarketUserNote } from "@/lib/server/markets/marketSerialization";
 import {
   findNoteLeafIndexInPool,
@@ -389,7 +390,7 @@ async function storeDeposit(body: StoreBody, userId: string) {
   });
 
   if (!note) {
-    return NextResponse.json({ error: "Market pool is not active" }, { status: 409 });
+    return NextResponse.json({ error: "Market setup is not active" }, { status: 409 });
   }
 
   await recordMarketActivity(db, {
@@ -405,6 +406,26 @@ async function storeDeposit(body: StoreBody, userId: string) {
     },
     txHash,
   });
+
+  if (note.status === "unspent") {
+    await emitMarketUserNotification(db, {
+      userId,
+      eventType: "market_deposit_confirmed",
+      noteId: note.id,
+      entityKind: "market_note",
+      entityId: note.id,
+      amountUnits: String(note.amount_units),
+      title: "Market note deposited",
+      actionUrl: "/market?view=portfolio&tab=notes",
+      txHash,
+      eventData: {
+        poolId: marketPool.poolId,
+        contractId: marketPool.contractId,
+        commitmentHex,
+        leafIndex,
+      },
+    });
+  }
 
   return NextResponse.json({ note: serializeMarketUserNote(note) });
 }

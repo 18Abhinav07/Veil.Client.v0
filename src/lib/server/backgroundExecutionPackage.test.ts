@@ -32,6 +32,44 @@ function packagePayload(): BackgroundSpendExecutionPackage {
   };
 }
 
+test("background execution package can checkpoint a pending step for restart recovery", async () => {
+  const payload: BackgroundSpendExecutionPackage = {
+    ...packagePayload(),
+    pendingStep: {
+      stepId: "step-1",
+      sourceNoteId: "note-1",
+      sourceCommitmentHex: "initial-commitment",
+      sourceAmountUnits: "6000000000",
+      sourceLeafIndex: 42,
+      changeNote: {
+        blindingHex: "change-blinding",
+        commitmentHex: "change-commitment",
+        amountUnits: "5000000000",
+        leafIndex: null,
+        dummyBlindingHex: "next-dummy-blinding",
+        dummyCommitmentHex: "next-dummy-commitment",
+        createdAt: 1780000000001,
+      },
+      outputCommitmentHex: "change-commitment",
+      outputAmountUnits: "5000000000",
+      recipientOutputCommitmentHex: null,
+      recipientEncryptedOutput: null,
+      relayStartLedger: 3391000,
+      createdAt: 1780000000002,
+    },
+  };
+
+  const encrypted = await encryptBackgroundExecutionPackage(payload, {
+    key: keyHex,
+  });
+
+  assert.doesNotMatch(JSON.stringify(encrypted), /change-blinding/);
+  assert.deepEqual(
+    await decryptBackgroundExecutionPackage(encrypted, { key: keyHex }),
+    payload,
+  );
+});
+
 test("background execution package encrypts spend material at rest", async () => {
   const encrypted = await encryptBackgroundExecutionPackage(packagePayload(), {
     key: keyHex,

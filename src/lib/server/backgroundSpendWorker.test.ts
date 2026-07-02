@@ -100,6 +100,10 @@ function encryptedPackage(label = "encrypted-package"): EncryptedBackgroundExecu
 
 function repository(events: string[] = []): BackgroundSpendWorkerRepository {
   return {
+    async claimNextReconcilableBackgroundSpendJobStep() {
+      events.push("reconcile-candidate");
+      return null;
+    },
     async getNextBackgroundSpendJobCandidate() {
       events.push("candidate");
       return {
@@ -128,6 +132,7 @@ function repository(events: string[] = []): BackgroundSpendWorkerRepository {
           recipient_address: "GRECIPIENT",
           amount_units: "1000000000",
           source_note_id: "note-1",
+          source_leaf_index: 42,
           recipient_user_id: null,
           recipient_handle: null,
           recipient_note_public_hex: null,
@@ -138,6 +143,9 @@ function repository(events: string[] = []): BackgroundSpendWorkerRepository {
     async markSpendJobStepProofReady() {
       events.push("proof-ready");
     },
+    async markSpendJobStepPrepared(input) {
+      events.push(`prepared:${input.encryptedChangeNoteCiphertext}`);
+    },
     async markSpendJobStepRelaying() {
       events.push("relaying");
     },
@@ -146,6 +154,9 @@ function repository(events: string[] = []): BackgroundSpendWorkerRepository {
     },
     async storeSpendJobStepResult(input) {
       events.push(`stored:${input.changeNote?.commitmentHex ?? "none"}`);
+      if (input.nextExecutionPackage) {
+        events.push(`package-stored:${input.nextExecutionPackage.expiresAt.toISOString()}`);
+      }
     },
     async updateSpendJobExecutionPackage(input) {
       events.push(`package-updated:${input.package.expiresAt}`);
@@ -159,20 +170,34 @@ function repository(events: string[] = []): BackgroundSpendWorkerRepository {
     async markSpendJobNeedsReconcile(input) {
       events.push(`reconcile:${input.errorClass}`);
     },
-  };
+    async heartbeatSpendJobLease() {
+      events.push("heartbeat");
+    },
+    async markSpendJobRecoveredSubmittedTx(input) {
+      events.push(`recovered-tx:${input.txHash}`);
+    },
+  } as BackgroundSpendWorkerRepository;
 }
 
 test("background worker advances one Lane 1 step and rotates the encrypted package to the change note", async () => {
   const events: string[] = [];
+  const encryptedPackages: BackgroundSpendExecutionPackage[] = [];
   const result = await advanceOneBackgroundSpendStep({
     now: new Date("2026-06-30T12:00:00.000Z"),
     leaseOwner: "worker-a",
     repository: repository(events),
     decryptPackage: async () => packagePayload(),
     encryptPackage: async (payload) => {
+      encryptedPackages.push(payload);
+      if (payload.pendingStep) {
+        assert.equal(payload.activeNote.commitmentHex, "active-commitment");
+        assert.equal(payload.pendingStep.outputCommitmentHex, "change-commitment-one");
+        return encryptedPackage("prepared");
+      }
       assert.equal(payload.activeNote.commitmentHex, "change-commitment-one");
       assert.equal(payload.activeNote.amountUnits, "5000000000");
       assert.equal(payload.activeNote.leafIndex, 44);
+      assert.equal(payload.pendingStep, null);
       return encryptedPackage("rotated");
     },
     encryptChangeNote: async (note) => `encrypted-note:${note.commitmentHex}:${note.leafIndex}`,
@@ -184,15 +209,153 @@ test("background worker advances one Lane 1 step and rotates the encrypted packa
   });
 
   assert.equal(result.status, "advanced");
-  assert.deepEqual(events, [
-    "candidate",
-    "claim:worker-a",
-    "proof-ready",
-    "relaying",
-    "submitted:tx-one",
-    "stored:change-commitment-one",
-    "package-updated:2026-07-01T00:00:00.000Z",
-  ]);
+  assert.equal(encryptedPackages.length, 2);
+  assert.ok(events.includes("prepared:encrypted-note:change-commitment-one:null"));
+  assert.ok(events.includes("submitted:tx-one"));
+  assert.ok(events.includes("stored:change-commitment-one"));
+  assert.ok(events.includes("package-stored:2026-07-01T00:00:00.000Z"));
+  assert.ok(
+    events.indexOf("prepared:encrypted-note:change-commitment-one:null") <
+      events.indexOf("relaying"),
+  );
+});
+
+test("background worker checks for reconcilable submitted work before claiming new work", async () => {
+  const events: string[] = [];
+  const repo = repository(events);
+  repo.claimNextReconcilableBackgroundSpendJobStep = async () => {
+    events.push("reconcile-candidate");
+    return null;
+  };
+
+  await advanceOneBackgroundSpendStep({
+    now: new Date("2026-06-30T12:00:00.000Z"),
+    leaseOwner: "worker-a",
+    repository: repo,
+    decryptPackage: async () => packagePayload(),
+    encryptPackage: async () => encryptedPackage("rotated"),
+    encryptChangeNote: async (note) => `encrypted-note:${note.commitmentHex}:${note.leafIndex}`,
+    proveWithdraw: async () => withdrawResponse("one"),
+    proveTransfer: async () => transferResponse("unused"),
+    relay: async () => ({ txHash: "tx-one" }),
+    waitForTransaction: async () => 99,
+    findNoteLeafIndex: async () => 44,
+  });
+
+  assert.equal(events[0], "reconcile-candidate");
+  assert.equal(events[1], "candidate");
+});
+
+test("background worker recovers a prepared step from commitment events without relaying twice", async () => {
+  const events: string[] = [];
+  const pendingPackage = packagePayload({
+    pendingStep: {
+      stepId: "step-1",
+      sourceNoteId: "note-1",
+      sourceCommitmentHex: "active-commitment",
+      sourceAmountUnits: "6000000000",
+      sourceLeafIndex: 42,
+      changeNote: {
+        blindingHex: "change-blinding-one",
+        commitmentHex: "change-commitment-one",
+        amountUnits: "5000000000",
+        leafIndex: null,
+        dummyBlindingHex: "next-dummy-blinding-one",
+        dummyCommitmentHex: "next-dummy-commitment-one",
+        createdAt: 1780000000000,
+      },
+      outputCommitmentHex: "change-commitment-one",
+      outputAmountUnits: "5000000000",
+      recipientOutputCommitmentHex: null,
+      recipientEncryptedOutput: null,
+      relayStartLedger: 3391000,
+      createdAt: 1780000000001,
+    },
+  });
+  const repo = repository(events);
+  repo.claimNextReconcilableBackgroundSpendJobStep = async () => {
+    events.push("reconcile-candidate");
+    return {
+      job: {
+        id: "job-1",
+        user_id: "user-1",
+        kind: "lane1_withdraw",
+        pool_id: "pool",
+        execution_package_ciphertext: JSON.stringify(encryptedPackage()),
+        execution_package_expires_at: new Date("2026-07-01T00:00:00.000Z"),
+      },
+      step: {
+        id: "step-1",
+        ordinal: 1,
+        recipient_address: "GRECIPIENT",
+        amount_units: "1000000000",
+        source_note_id: "note-1",
+        source_leaf_index: 42,
+        recipient_user_id: null,
+        recipient_handle: null,
+        recipient_note_public_hex: null,
+        recipient_x25519_public_hex: null,
+        status: "relaying",
+        source_commitment_hex: "active-commitment",
+        source_amount_units: "6000000000",
+        relay_body: relayBody("one") as unknown as Record<string, unknown>,
+        tx_hash: null,
+        output_commitment_hex: "change-commitment-one",
+        output_amount_units: "5000000000",
+        output_leaf_index: null,
+        encrypted_change_note_ciphertext: "encrypted-note:change-commitment-one:null",
+        recipient_output_commitment_hex: null,
+        recipient_output_leaf_index: null,
+        recipient_encrypted_output: null,
+      },
+    };
+  };
+
+  const result = await advanceOneBackgroundSpendStep({
+    now: new Date("2026-06-30T12:00:00.000Z"),
+    leaseOwner: "worker-a",
+    repository: repo,
+    decryptPackage: async () => pendingPackage,
+    encryptPackage: async (payload) => {
+      assert.equal(payload.activeNote.commitmentHex, "change-commitment-one");
+      assert.equal(payload.activeNote.leafIndex, 44);
+      return encryptedPackage("rotated");
+    },
+    encryptChangeNote: async () => {
+      throw new Error("prepared step already has encrypted change note");
+    },
+    proveWithdraw: async () => {
+      throw new Error("recovery must not re-prove");
+    },
+    proveTransfer: async () => {
+      throw new Error("recovery must not re-prove");
+    },
+    relay: async () => {
+      throw new Error("recovery must not relay when commitment event has tx hash");
+    },
+    waitForTransaction: async (txHash) => {
+      assert.equal(txHash, "tx-recovered");
+      return 99;
+    },
+    findNoteLeafIndex: async () => {
+      throw new Error("recovered commitment leaf should be reused");
+    },
+    findPoolCommitmentEvent: async (commitmentHex, startLedger) => {
+      assert.equal(commitmentHex, "change-commitment-one");
+      assert.equal(startLedger, 3391000);
+      return { leafIndex: 44, ledger: 3391001, txHash: "tx-recovered" };
+    },
+  });
+
+  assert.deepEqual(result, {
+    status: "reconciled",
+    jobId: "job-1",
+    stepId: "step-1",
+    txHash: "tx-recovered",
+  });
+  assert.ok(events.includes("recovered-tx:tx-recovered"));
+  assert.ok(events.includes("stored:change-commitment-one"));
+  assert.equal(events.includes("candidate"), false);
 });
 
 test("background worker deletes the package when the final step spends the note to zero", async () => {
@@ -217,8 +380,8 @@ test("background worker deletes the package when the final step spends the note 
   });
 
   assert.equal(result.status, "advanced");
-  assert.ok(events.includes("package-deleted"));
-  assert.equal(events.some((event) => event.startsWith("package-updated")), false);
+  assert.ok(events.includes("stored:none"));
+  assert.equal(events.some((event) => event.startsWith("package-stored")), false);
 });
 
 test("background worker stores Lane 2 recipient output and keeps extAmount zero", async () => {
@@ -247,6 +410,7 @@ test("background worker stores Lane 2 recipient output and keeps extAmount zero"
       recipient_address: "GRECIPIENT",
       amount_units: "1000000000",
       source_note_id: "note-1",
+      source_leaf_index: 42,
       recipient_user_id: "user-2",
       recipient_handle: "raptor",
       recipient_note_public_hex: "44".repeat(32),
@@ -303,7 +467,7 @@ test("background worker refuses expired packages before claiming a spend step", 
   });
 
   assert.equal(result.status, "expired");
-  assert.deepEqual(events, ["candidate", "package-deleted"]);
+  assert.deepEqual(events, ["reconcile-candidate", "candidate", "package-deleted"]);
 });
 
 test("background worker moves post-submit indexing failures to reconcile, not retry", async () => {

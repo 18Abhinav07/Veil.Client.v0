@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import {
   findNoteLeafIndexInPool,
+  findPoolCommitmentEventInPool,
   waitForTransaction,
 } from "@/lib/stellar";
 import { isTransientProverLag, isTransientRelayLag } from "@/lib/server/bulkWithdraw";
@@ -24,6 +25,10 @@ import {
   type MarketEscrowConsolidationPairRow,
   type SubmittedMarketEscrowConsolidationRow,
 } from "@/lib/server/markets/marketRepository";
+import {
+  emitMarketPayoutFailedNotification,
+  emitMarketPayoutReadyNotification,
+} from "@/lib/server/markets/marketNotifications";
 import { serializeMarketPayout } from "@/lib/server/markets/marketSerialization";
 import { getWalletServerEnv } from "@/lib/server/serverEnv";
 import { fetchJsonWithRetry } from "@/lib/server/upstreamRetry";
@@ -278,6 +283,24 @@ async function relayWithRetry(relayBody: RelayBody): Promise<{ txHash: string }>
   );
 }
 
+function isCommitmentNotFoundError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /NewCommitment event .* not found/i.test(message);
+}
+
+async function findMarketPoolCommitmentEvent(
+  pool: MarketPoolLocator,
+  commitmentHex: string,
+) {
+  return findPoolCommitmentEventInPool(commitmentHex, Math.max(1, pool.deployment_ledger), {
+    timeoutMs: 45_000,
+    pool: {
+      poolId: pool.contract_id,
+      deploymentLedger: pool.deployment_ledger,
+    },
+  });
+}
+
 async function findMarketPoolLeafIndex(
   pool: MarketPoolLocator,
   commitmentHex: string,
@@ -289,6 +312,92 @@ async function findMarketPoolLeafIndex(
       poolId: pool.contract_id,
       deploymentLedger: pool.deployment_ledger,
     },
+  });
+}
+
+async function recoverPreparedPayoutSubmission(input: {
+  db: ReturnType<typeof getPgPool>;
+  payout: ExecutableMarketPayoutRow;
+  adminEmail: string;
+}) {
+  const sourceEscrowNoteId = readString(
+    input.payout.source_escrow_note_id,
+    "prepared payout source escrow note id",
+  );
+  const payoutCommitmentHex = readString(
+    input.payout.payout_commitment_hex,
+    "prepared payout commitment",
+  );
+  const encryptedPayoutNoteCiphertext = readString(
+    input.payout.encrypted_note_ciphertext,
+    "prepared payout ciphertext",
+  );
+
+  let recovered: Awaited<ReturnType<typeof findMarketPoolCommitmentEvent>>;
+  try {
+    recovered = await findMarketPoolCommitmentEvent(input.payout, payoutCommitmentHex);
+  } catch (error) {
+    if (isCommitmentNotFoundError(error)) return null;
+    throw error;
+  }
+
+  const txHash = trimString(recovered.txHash);
+  if (!txHash) {
+    return NextResponse.json(
+      {
+        error: "Recovered payout commitment event did not include tx hash",
+        payoutId: input.payout.id,
+        payoutCommitmentHex,
+        leafIndex: recovered.leafIndex,
+        ledger: recovered.ledger,
+      },
+      { status: 409 },
+    );
+  }
+
+  const submitted = await markMarketPayoutSubmitted(input.db, {
+    marketId: input.payout.market_id,
+    payoutId: input.payout.id,
+    sourceEscrowNoteId,
+    payoutCommitmentHex,
+    encryptedPayoutNoteCiphertext,
+    changeCommitmentHex: trimString(input.payout.change_commitment_hex) || null,
+    encryptedChangeNoteCiphertext:
+      trimString(input.payout.encrypted_change_note_ciphertext) || null,
+    changeAmountUnits: trimString(input.payout.change_amount_units) || null,
+    txHash,
+  });
+  if (!submitted) {
+    await emitMarketPayoutFailedNotification(input.db, {
+      userId: input.payout.user_id,
+      payoutId: input.payout.id,
+      marketId: input.payout.market_id,
+      amountUnits: String(input.payout.amount_units),
+      errorMessage: "Prepared payout was recovered but could not be checkpointed",
+      txHash,
+    });
+    return NextResponse.json(
+      {
+        error: "Prepared payout was recovered but could not be checkpointed",
+        txHash,
+        payoutId: input.payout.id,
+        payoutCommitmentHex,
+      },
+      { status: 409 },
+    );
+  }
+
+  return finalizeSubmittedPayout({
+    db: input.db,
+    payout: {
+      ...input.payout,
+      ...submitted,
+      tx_hash: txHash,
+      source_escrow_note_id: sourceEscrowNoteId,
+      payout_commitment_hex: payoutCommitmentHex,
+      encrypted_note_ciphertext: encryptedPayoutNoteCiphertext,
+    },
+    adminEmail: input.adminEmail,
   });
 }
 
@@ -407,6 +516,14 @@ async function finalizeSubmittedPayout(input: {
     txHash,
   });
   if (!result.payout) {
+    await emitMarketPayoutFailedNotification(input.db, {
+      userId: input.payout.user_id,
+      payoutId: input.payout.id,
+      marketId: input.payout.market_id,
+      amountUnits: String(input.payout.amount_units),
+      errorMessage: "Submitted payout could not be finalized",
+      txHash,
+    });
     return NextResponse.json(
       {
         error: "Submitted payout could not be finalized",
@@ -415,9 +532,19 @@ async function finalizeSubmittedPayout(input: {
         payoutLeafIndex,
       changeLeafIndex,
     },
-    { status: 409 },
-  );
+      { status: 409 },
+    );
   }
+  await emitMarketPayoutReadyNotification(input.db, {
+    userId: result.payout.user_id,
+    payoutId: result.payout.id,
+    marketId: result.payout.market_id,
+    amountUnits: String(result.payout.amount_units),
+    payoutCommitmentHex: result.payout.payout_commitment_hex,
+    encryptedNoteCiphertext: result.payout.encrypted_note_ciphertext,
+    leafIndex: result.payout.leaf_index,
+    txHash: result.payout.tx_hash,
+  });
 
   const remainingCount = await countRemainingPayouts(input.db, input.payout.market_id);
   return NextResponse.json({
@@ -453,6 +580,9 @@ async function submitPreparedPayout(input: {
     input.payout.encrypted_note_ciphertext,
     "prepared payout ciphertext",
   );
+  const recovered = await recoverPreparedPayoutSubmission(input);
+  if (recovered) return recovered;
+
   const relayed = await relayWithRetry(relayBody);
   const submitted = await markMarketPayoutSubmitted(input.db, {
     marketId: input.payout.market_id,
@@ -600,12 +730,90 @@ async function finalizeSubmittedConsolidation(input: {
   });
 }
 
+async function recoverPreparedConsolidationSubmission(input: {
+  db: ReturnType<typeof getPgPool>;
+  transfer: SubmittedMarketEscrowConsolidationRow;
+  adminEmail: string;
+}) {
+  const rollupCommitmentHex = readString(
+    input.transfer.output_commitment_hex,
+    "prepared consolidation commitment",
+  );
+  const encryptedRollupNoteCiphertext = readString(
+    input.transfer.output_encrypted_note_ciphertext,
+    "prepared consolidation ciphertext",
+  );
+  const rollupAmountUnits = readPositiveUnits(
+    input.transfer.output_amount_units,
+    "prepared consolidation amount",
+  );
+
+  let recovered: Awaited<ReturnType<typeof findMarketPoolCommitmentEvent>>;
+  try {
+    recovered = await findMarketPoolCommitmentEvent(input.transfer, rollupCommitmentHex);
+  } catch (error) {
+    if (isCommitmentNotFoundError(error)) return null;
+    throw error;
+  }
+
+  const txHash = trimString(recovered.txHash);
+  if (!txHash) {
+    return NextResponse.json(
+      {
+        error: "Recovered consolidation commitment event did not include tx hash",
+        transferId: input.transfer.id,
+        rollupCommitmentHex,
+        leafIndex: recovered.leafIndex,
+        ledger: recovered.ledger,
+      },
+      { status: 409 },
+    );
+  }
+
+  const submitted = await markMarketEscrowConsolidationSubmitted(input.db, {
+    marketId: input.transfer.market_id,
+    adminEmail: input.adminEmail,
+    sourceEscrowNoteIds: input.transfer.source_escrow_note_ids,
+    rollupCommitmentHex,
+    encryptedRollupNoteCiphertext,
+    rollupAmountUnits,
+    txHash,
+  });
+  if (!submitted) {
+    return NextResponse.json(
+      {
+        error: "Prepared consolidation was recovered but could not be checkpointed",
+        transferId: input.transfer.id,
+        txHash,
+        rollupCommitmentHex,
+      },
+      { status: 409 },
+    );
+  }
+
+  return finalizeSubmittedConsolidation({
+    db: input.db,
+    transfer: {
+      ...input.transfer,
+      ...submitted,
+      tx_hash: txHash,
+      output_commitment_hex: rollupCommitmentHex,
+      output_encrypted_note_ciphertext: encryptedRollupNoteCiphertext,
+      output_amount_units: rollupAmountUnits,
+    },
+    adminEmail: input.adminEmail,
+  });
+}
+
 async function submitPreparedConsolidation(input: {
   db: ReturnType<typeof getPgPool>;
   transfer: SubmittedMarketEscrowConsolidationRow;
   adminEmail: string;
 }) {
   const relayBody = readRelayBody(input.transfer.relay_body, "prepared consolidation relay body");
+  const recovered = await recoverPreparedConsolidationSubmission(input);
+  if (recovered) return recovered;
+
   const relayed = await relayWithRetry(relayBody);
   const submitted = await markMarketEscrowConsolidationSubmitted(input.db, {
     marketId: input.transfer.market_id,
@@ -991,6 +1199,14 @@ export async function POST(
       txHash: relayed.txHash,
     });
     if (!submitted) {
+      await emitMarketPayoutFailedNotification(db, {
+        userId: payout.user_id,
+        payoutId: payout.id,
+        marketId,
+        amountUnits: String(payout.amount_units),
+        errorMessage: "Payout transfer was relayed but could not be checkpointed",
+        txHash: relayed.txHash,
+      });
       return NextResponse.json(
         {
           error: "Payout transfer was relayed but could not be checkpointed",

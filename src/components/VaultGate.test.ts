@@ -46,7 +46,7 @@ test("VaultGate waits for pool registration status before showing registration f
   const source = readFileSync(join(root, "src", "components", "VaultGate.tsx"), "utf8");
 
   assert.match(source, /registrationStatus === null/);
-  assert.match(source, /Checking pool registration/);
+  assert.match(source, /Checking private access/);
   assert.match(source, /registrationStatus !== null && !registrationStatus\.registeredInPool/);
 });
 

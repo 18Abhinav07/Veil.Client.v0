@@ -2,7 +2,7 @@ create table if not exists market_pools (
   id uuid primary key default gen_random_uuid(),
   pool_id text not null unique,
   contract_id text,
-  tree_depth integer not null default 15,
+  tree_depth integer not null default 10,
   deployment_ledger integer not null default 1,
   status text not null default 'planned' check (status in ('planned', 'deploying', 'active', 'paused', 'retired')),
   metadata jsonb not null default '{}'::jsonb,
@@ -40,7 +40,7 @@ create table if not exists market_user_notes (
   asset_code text not null default 'USDC',
   amount_units numeric(40, 0) not null,
   leaf_index integer,
-  status text not null default 'unspent' check (status in ('pending_deposit', 'unspent', 'pending_bet', 'escrowed', 'spent', 'payout_pending', 'payout_received', 'failed_recovery')),
+  status text not null default 'unspent' check (status in ('pending_deposit', 'unspent', 'pending_bet', 'pending_withdraw', 'escrowed', 'spent', 'payout_pending', 'payout_received', 'failed_recovery')),
   source text not null default 'market_deposit' check (source in ('market_deposit', 'change', 'payout', 'refund')),
   tx_hash text,
   created_at timestamptz not null default now(),
@@ -50,7 +50,7 @@ create table if not exists market_user_notes (
 
 alter table market_user_notes drop constraint if exists market_user_notes_status_check;
 alter table market_user_notes add constraint market_user_notes_status_check
-  check (status in ('pending_deposit', 'unspent', 'pending_bet', 'escrowed', 'spent', 'payout_pending', 'payout_received', 'failed_recovery'));
+  check (status in ('pending_deposit', 'unspent', 'pending_bet', 'pending_withdraw', 'escrowed', 'spent', 'payout_pending', 'payout_received', 'failed_recovery'));
 
 create table if not exists market_bets (
   id uuid primary key default gen_random_uuid(),

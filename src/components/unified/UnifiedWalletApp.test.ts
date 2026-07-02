@@ -35,8 +35,10 @@ test("unified wallet dashboard renders the premium wallet surface instead of emb
   assert.match(privateSource, /handleDeposit/);
   assert.match(privateSource, /handlePrivateSend/);
   assert.match(privateSource, /sendMode/);
-  assert.match(privateSource, /Direct-2-Wallet/);
-  assert.match(privateSource, /Note-2-Note/);
+  assert.match(privateSource, /Public wallet/);
+  assert.match(privateSource, /Private transfer/);
+  assert.doesNotMatch(privateSource, /Direct-2-Wallet/);
+  assert.doesNotMatch(privateSource, /Note-2-Note/);
   assert.doesNotMatch(privateSource, />Public address</);
   assert.doesNotMatch(privateSource, />VEIL user</);
   assert.match(privateSource, /lane2_transfer/);
@@ -56,15 +58,27 @@ test("unified wallet dashboard renders the premium wallet surface instead of emb
   assert.match(privateSource, /MAX_INTERACTIVE_RECIPIENTS/);
   assert.match(privateSource, /backgroundConsent/);
   assert.match(privateSource, /executionPackage/);
+  assert.match(privateSource, /expectedOutputCommitmentHex/);
+  assert.match(privateSource, /interactiveSpendInFlight/);
+  assert.match(privateSource, /interactiveSpendInFlightRef/);
+  assert.match(privateSource, /addEventListener\("beforeunload"/);
   assert.doesNotMatch(privateSource, /coming soon/);
   assert.doesNotMatch(privateActivitySource, /EventSource\("\/api\/wallet\/private\/spend-jobs\/events"\)/);
   assert.match(privateActivitySource, /useWalletRealtimeEvent/);
   assert.match(privateActivitySource, /handleResumeJob/);
+  assert.match(privateActivitySource, /hasQueuedStepToResume/);
   assert.match(privateActivitySource, /hasProofReadyStepToResume/);
+  assert.match(privateActivitySource, /interruptedInteractiveJob/);
+  assert.match(privateActivitySource, /beforeunload/);
+  assert.match(privateActivitySource, /addEventListener\("beforeunload"/);
+  assert.match(privateActivitySource, /removeEventListener\("beforeunload"/);
+  assert.match(privateActivitySource, /Private transaction in progress/);
   assert.match(privateActivitySource, /handleReconcileJob/);
-  assert.match(privateActivitySource, /hasSubmittedStepToReconcile/);
+  assert.doesNotMatch(privateActivitySource, /hasSubmittedStepToReconcile/);
   assert.match(privateActivitySource, /canReconcileSpendJob\(job\)/);
-  assert.match(privateActivitySource, /\/api\/wallet\/private\/spend-jobs\/\$\{job\.job\.id\}\/reconcile/);
+  assert.match(privateActivitySource, /job\.job\.status === "needs_reconcile"/);
+  assert.doesNotMatch(privateActivitySource, /\["submitted", "relaying", "retry_wait", "needs_reconcile"\]\.includes\(step\.status\)/);
+  assert.match(privateActivitySource, /\/api\/wallet\/private\/spend-jobs\/\$\{latestJob\.job\.id\}\/reconcile/);
   assert.match(privateActivitySource, /onClick=\{\(\) => void handleResumeJob\(job\)\}/);
   assert.match(privateActivitySource, /onClick=\{\(\) => void handleReconcileJob\(job\)\}/);
   assert.match(privateActivitySource, /Proof/);
@@ -96,7 +110,8 @@ test("contacts and requests wallet surfaces are wired into the unified app", () 
   assert.match(requestsSource, /\/api\/wallet\/requests/);
   assert.match(requestsSource, /encryptRequestMemo/);
   assert.match(requestsSource, /decryptRequestMemo/);
-  assert.match(requestsSource, /Note-2-Note/);
+  assert.match(requestsSource, /Pay privately/);
+  assert.doesNotMatch(requestsSource, /Note-2-Note/);
   assert.match(requestsSource, /paidSpendJobId/);
   assert.match(publicActivitySource, /\/api\/wallet\/public\/transactions/);
   assert.match(publicActivitySource, /PublicTransactionView/);
@@ -241,6 +256,46 @@ test("wallet notification actions keep navigation in memory so the vault is not 
   assert.match(headerSource, /event\.preventDefault\(\)/);
   assert.match(headerSource, /event\.stopPropagation\(\)/);
   assert.doesNotMatch(headerSource, /href=\{notification\.actionUrl/);
+});
+
+test("wallet polish keeps toasts bounded and refreshes dashboard state on first entry", () => {
+  const toastSource = readSource("src/components/unified/StatusToast.tsx");
+  const publicSource = readSource("src/components/unified/PublicDashboard.tsx");
+  const privateSource = readSource("src/components/unified/PrivateDashboard.tsx");
+
+  assert.match(toastSource, /MAX_COLLAPSED_MESSAGE_LENGTH = 50/);
+  assert.match(toastSource, /<details/);
+  assert.match(toastSource, /break-words/);
+  assert.match(toastSource, /max-w-\[min\(420px,calc\(100vw-32px\)\)\]/);
+  assert.match(publicSource, /<StatusToast/);
+  assert.match(privateSource, /<StatusToast/);
+  assert.match(publicSource, /firstRefreshDoneRef/);
+  assert.match(privateSource, /firstRefreshDoneRef/);
+  assert.match(publicSource, /void refreshAll\(\)/);
+  assert.match(privateSource, /void refreshAll\(\)/);
+});
+
+test("notification popover dismisses cleanly and refreshes from wallet realtime events", () => {
+  const appSource = readSource("src/components/unified/UnifiedWalletApp.tsx");
+  const headerSource = readSource("src/components/unified/TopHeader.tsx");
+
+  assert.match(appSource, /"private_note_received"/);
+  assert.match(appSource, /"private_payment_sent"/);
+  assert.match(appSource, /"market_deposit_confirmed"/);
+  assert.match(appSource, /"market_bet_confirmed"/);
+  assert.match(appSource, /"market_payout_ready"/);
+  assert.match(appSource, /"market_payout_claimed"/);
+  assert.match(headerSource, /useWalletRealtimeEvent/);
+  assert.match(headerSource, /NOTIFICATION_RELEVANT_EVENT_TYPES/);
+  assert.match(headerSource, /"market_deposit_confirmed"/);
+  assert.match(headerSource, /"market_bet_confirmed"/);
+  assert.match(headerSource, /"market_payout_ready"/);
+  assert.match(headerSource, /"market_payout_claimed"/);
+  assert.match(headerSource, /"market_payout_failed"/);
+  assert.match(headerSource, /popoverRef/);
+  assert.match(headerSource, /document\.addEventListener\("pointerdown"/);
+  assert.match(headerSource, /setNotificationsOpen\(false\)/);
+  assert.match(headerSource, /current\.filter\(\(notification\) => !readById\.has\(notification\.id\)\)/);
 });
 
 test("wallet navigation controls use explicit buttons so clicks cannot submit and remount the vault", () => {

@@ -7,6 +7,7 @@ import {
   claimMarketPayoutNote,
   recordMarketActivity,
 } from "@/lib/server/markets/marketRepository";
+import { emitMarketUserNotification } from "@/lib/server/markets/marketNotifications";
 import {
   serializeMarketPayout,
   serializeMarketUserNote,
@@ -85,6 +86,23 @@ export async function POST(
     eventType: "market_payout_claimed",
     eventData: { commitmentHex },
     txHash: claimed.payout.tx_hash,
+  });
+  await emitMarketUserNotification(db, {
+    userId: auth.userId,
+    eventType: "market_payout_claimed",
+    marketId: claimed.payout.market_id,
+    payoutId: claimed.payout.id,
+    noteId: claimed.note.id,
+    entityKind: "market_payout",
+    entityId: claimed.payout.id,
+    amountUnits: String(claimed.payout.amount_units),
+    title: "Market payout claimed",
+    actionUrl: "/market?view=portfolio&tab=notes",
+    txHash: claimed.payout.tx_hash,
+    eventData: {
+      commitmentHex,
+      noteId: claimed.note.id,
+    },
   });
 
   return NextResponse.json({

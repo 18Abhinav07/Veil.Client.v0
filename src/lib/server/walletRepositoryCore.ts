@@ -12,6 +12,21 @@ export interface QueryClient {
   ): Promise<QueryResult<Row>>;
 }
 
+const STELLAR_UNITS_PER_USDC = BigInt(10_000_000);
+
+export function formatUsdcUnits(units: string): string {
+  try {
+    const value = BigInt(units);
+    const whole = value / STELLAR_UNITS_PER_USDC;
+    const fraction = value % STELLAR_UNITS_PER_USDC;
+    let decimal = fraction.toString().padStart(7, "0").replace(/0+$/, "");
+    if (decimal.length < 2) decimal = decimal.padEnd(2, "0");
+    return `${whole}.${decimal} USDC`;
+  } catch {
+    return `${units} units`;
+  }
+}
+
 export interface WalletProfileRow {
   id: string;
   user_id: string;
@@ -304,8 +319,6 @@ export type SpendJobStepStatus =
   | "retry_wait"
   | "needs_reconcile"
   | "failed_final";
-
-const MAX_SPEND_JOB_STEP_ATTEMPTS = 3;
 
 export type JobStatus =
   | "queued"
@@ -1196,6 +1209,57 @@ export async function createNotification(
   return one(result);
 }
 
+export async function createNotificationOnce(
+  db: QueryClient,
+  input: {
+    userId: string;
+    activityEventId?: string | null;
+    type: string;
+    severity?: "info" | "success" | "warning" | "error";
+    entityKind: string;
+    entityId?: string | null;
+    title: string;
+    body?: string | null;
+    actionUrl?: string | null;
+  },
+): Promise<NotificationRow | null> {
+  const result = await db.query<NotificationRow>(
+    `insert into notification_inbox (
+       user_id,
+       activity_event_id,
+       type,
+       severity,
+       entity_kind,
+       entity_id,
+       title,
+       body,
+       action_url
+     )
+     select $1::uuid, $2::uuid, $3, $4, $5, $6::uuid, $7, $8, $9
+     where not exists (
+       select 1
+       from notification_inbox
+       where user_id = $1::uuid
+         and type = $3
+         and entity_kind = $5
+         and entity_id is not distinct from $6::uuid
+     )
+     returning *`,
+    [
+      input.userId,
+      input.activityEventId ?? null,
+      input.type,
+      input.severity ?? "info",
+      input.entityKind,
+      input.entityId ?? null,
+      input.title,
+      input.body ?? null,
+      input.actionUrl ?? null,
+    ],
+  );
+  return one(result);
+}
+
 export async function listNotifications(
   db: QueryClient,
   input: { userId: string; unreadOnly?: boolean; limit?: number },
@@ -1709,16 +1773,23 @@ export async function getNextBackgroundSpendJobCandidate(
        and j.execution_package_deleted_at is null
        and j.execution_package_expires_at is not null
        and j.status in ('queued', 'running', 'waiting_retry', 'paused_needs_unlock', 'failed_recoverable')
-       and s.status in ('queued', 'retry_wait', 'proof_ready', 'proving', 'relaying')
+       and s.status in ('queued', 'retry_wait', 'proving')
 	       and s.tx_hash is null
 	       and (s.retry_after is null or s.retry_after <= now())
+       and not exists (
+         select 1
+         from spend_job_steps previous
+         where previous.user_id = s.user_id
+           and previous.job_id = s.job_id
+           and previous.ordinal < s.ordinal
+           and previous.status <> 'confirmed'
+       )
 	       and (
-	         s.status = 'proof_ready'
-	         or (
-	           s.status = 'relaying'
-	           and s.tx_hash is null
-	           and (s.lease_expires_at is null or s.lease_expires_at <= now())
-	         )
+         (
+           s.status = 'proving'
+           and s.tx_hash is null
+           and s.lease_expires_at <= now()
+         )
 	         or s.lease_expires_at <= now()
 	         or (s.status in ('queued', 'retry_wait') and s.lease_expires_at is null)
 	       )
@@ -1728,6 +1799,83 @@ export async function getNextBackgroundSpendJobCandidate(
   );
   const job = one(result);
   return job ? { job } : null;
+}
+
+export async function claimNextReconcilableBackgroundSpendJobStep(
+  db: QueryClient,
+  input: { leaseOwner: string; leaseSeconds?: number },
+): Promise<{ job: SpendJobRow; step: SpendJobStepRow } | null> {
+  const leaseSeconds = Math.max(30, Math.min(input.leaseSeconds ?? 900, 900));
+
+  return withTransaction(db, async (client) => {
+    const claimed = one(
+      await client.query<SpendJobStepRow>(
+        `with next_step as (
+           select s.id
+           from spend_jobs j
+           join spend_job_steps s on s.job_id = j.id
+           where j.execution_mode = 'background'
+             and j.execution_package_ciphertext is not null
+             and j.execution_package_deleted_at is null
+             and j.status in ('running', 'waiting_retry', 'needs_reconcile', 'failed_recoverable')
+             and s.status in ('submitted', 'needs_reconcile', 'relaying', 'proof_ready', 'retry_wait')
+             and s.output_commitment_hex is not null
+             and s.output_amount_units is not null
+             and (s.retry_after is null or s.retry_after <= now())
+             and (
+               s.tx_hash is not null
+               or s.relay_body is not null
+             )
+             and (
+               s.lease_expires_at is null
+               or s.lease_expires_at <= now()
+             )
+             and not exists (
+               select 1
+               from spend_job_steps previous
+               where previous.user_id = s.user_id
+                 and previous.job_id = s.job_id
+                 and previous.ordinal < s.ordinal
+                 and previous.status <> 'confirmed'
+             )
+           order by j.created_at asc, s.ordinal asc
+           limit 1
+           for update of s skip locked
+         )
+         update spend_job_steps s set
+           lease_owner = $1,
+           lease_expires_at = now() + make_interval(secs => $2),
+           last_heartbeat_at = now(),
+           updated_at = now()
+         from next_step
+         where s.id = next_step.id
+         returning s.*`,
+        [input.leaseOwner, leaseSeconds],
+      ),
+    );
+    if (!claimed) return null;
+
+    await client.query(
+      `update spend_jobs set
+         status = case when status = 'needs_reconcile' then 'running' else status end,
+         lease_owner = $3,
+         lease_expires_at = now() + make_interval(secs => $4),
+         last_heartbeat_at = now(),
+         updated_at = now()
+       where user_id = $1 and id = $2`,
+      [claimed.user_id, claimed.job_id, input.leaseOwner, leaseSeconds],
+    );
+
+    const detail = await getSpendJobDetail(client, {
+      userId: claimed.user_id,
+      jobId: claimed.job_id,
+    });
+    const step = detail?.steps.find((item) => item.id === claimed.id);
+    if (!detail || !step) {
+      throw new Error("Reconcilable spend job step could not be loaded");
+    }
+    return { job: detail.job, step };
+  });
 }
 
 export async function updateSpendJobExecutionPackage(
@@ -1810,7 +1958,7 @@ export async function getNextRunnableSpendJobStep(
 	     where j.user_id = $1
 	       and j.id = $2
 	       and j.status in ('queued', 'running', 'waiting_retry', 'paused_needs_unlock', 'failed_recoverable')
-	       and s.status in ('queued', 'retry_wait', 'proof_ready')
+		       and s.status in ('queued', 'retry_wait')
 	       and s.tx_hash is null
 	       and (s.retry_after is null or s.retry_after <= now())
 	     order by s.ordinal asc
@@ -1853,19 +2001,18 @@ export async function claimNextRunnableSpendJobStep(
 	             and j.active_commitment_hex = $3
 	             and j.active_amount_units = $4
 	             and j.active_leaf_index is not distinct from $5
-	             and s.status in ('queued', 'retry_wait', 'proof_ready', 'proving', 'relaying')
+		             and s.status in ('queued', 'retry_wait', 'proving')
 	             and s.tx_hash is null
 	             and s.source_commitment_hex = $3
 	             and s.source_amount_units = $4
 	             and s.source_leaf_index is not distinct from $5
              and (s.retry_after is null or s.retry_after <= now())
 	             and (
-	               s.status = 'proof_ready'
-	               or (
-	                 s.status = 'relaying'
-	                 and s.tx_hash is null
-	                 and (s.lease_expires_at is null or s.lease_expires_at <= now())
-	               )
+		               (
+		                 s.status = 'proving'
+		                 and s.tx_hash is null
+		                 and s.lease_expires_at <= now()
+		               )
 	               or s.lease_expires_at <= now()
 	               or (s.status in ('queued', 'retry_wait') and s.lease_expires_at is null)
 	             )
@@ -1946,6 +2093,98 @@ export async function claimNextRunnableSpendJobStep(
   });
 }
 
+export async function resetProofReadySpendJobStepForReprove(
+  db: QueryClient,
+  input: {
+    userId: string;
+    jobId: string;
+    sourceCommitmentHex: string;
+    sourceAmountUnits: string;
+    sourceLeafIndex: number | null;
+  },
+): Promise<boolean> {
+  return withTransaction(db, async (client) => {
+    const resetStep = one(
+      await client.query<SpendJobStepRow>(
+        `update spend_job_steps s set
+           status = 'queued',
+           relay_body = null,
+           input_nullifier_hex = null,
+           output_commitment_hex = null,
+           output_amount_units = null,
+           output_leaf_index = null,
+           recipient_output_commitment_hex = null,
+           recipient_output_leaf_index = null,
+           recipient_encrypted_output = null,
+           encrypted_change_note_ciphertext = null,
+           error_class = null,
+           error_message = null,
+           retry_after = null,
+           lease_owner = null,
+           lease_expires_at = null,
+           last_heartbeat_at = null,
+           updated_at = now()
+         from spend_jobs j
+         where j.user_id = $1
+           and j.id = $2
+           and j.execution_mode = 'interactive'
+           and j.status in ('running', 'paused_needs_unlock', 'failed_recoverable')
+           and j.active_commitment_hex = $3
+           and j.active_amount_units = $4
+           and j.active_leaf_index is not distinct from $5
+           and s.user_id = j.user_id
+           and s.job_id = j.id
+           and s.status = 'proof_ready'
+           and s.tx_hash is null
+           and s.encrypted_change_note_ciphertext is null
+           and s.source_commitment_hex = $3
+           and s.source_amount_units = $4
+           and s.source_leaf_index is not distinct from $5
+           and not exists (
+             select 1
+             from spend_job_steps previous
+             where previous.user_id = s.user_id
+               and previous.job_id = s.job_id
+               and previous.ordinal < s.ordinal
+               and previous.status <> 'confirmed'
+           )
+         returning s.*`,
+        [
+          input.userId,
+          input.jobId,
+          input.sourceCommitmentHex,
+          input.sourceAmountUnits,
+          input.sourceLeafIndex,
+        ],
+      ),
+    );
+    if (!resetStep) return false;
+
+    await client.query(
+      `update spend_jobs set
+         status = 'running',
+         error_class = null,
+         error_message = null,
+         retry_after = null,
+         reconcile_after = null,
+         lease_owner = null,
+         lease_expires_at = null,
+         last_heartbeat_at = null,
+         updated_at = now()
+       where user_id = $1 and id = $2`,
+      [input.userId, input.jobId],
+    );
+
+    await appendSpendJobEvent(client, {
+      userId: input.userId,
+      jobId: input.jobId,
+      eventType: "spend_job_step_reprove_reset",
+      eventData: { stepId: resetStep.id },
+    });
+    return true;
+  });
+}
+
 export async function markSpendJobStepProving(
   db: QueryClient,
   input: { userId: string; jobId: string; stepId: string },
@@ -1997,8 +2236,12 @@ export async function markSpendJobStepProofReady(
     inputNullifierHex?: string | null;
     recipientOutputCommitmentHex?: string | null;
     recipientEncryptedOutput?: string | null;
+    encryptedChangeNoteCiphertext?: string | null;
+    leaseOwner?: string | null;
+    leaseSeconds?: number | null;
   },
 ): Promise<void> {
+  const leaseSeconds = Math.max(30, Math.min(input.leaseSeconds ?? 900, 900));
   assertMutation(
     await db.query(
       `update spend_job_steps set
@@ -2009,12 +2252,16 @@ export async function markSpendJobStepProofReady(
          output_amount_units = $6,
          recipient_output_commitment_hex = coalesce($8, recipient_output_commitment_hex),
 	         recipient_encrypted_output = coalesce($9, recipient_encrypted_output),
+	         encrypted_change_note_ciphertext = coalesce($12, encrypted_change_note_ciphertext),
 	         error_class = null,
 	         error_message = null,
 	         retry_after = null,
-	         lease_owner = null,
-	         lease_expires_at = null,
-	         last_heartbeat_at = null,
+	         lease_owner = coalesce($10, lease_owner),
+	         lease_expires_at = case
+	           when $10::text is null then lease_expires_at
+	           else now() + make_interval(secs => $11)
+	         end,
+	         last_heartbeat_at = now(),
 	         updated_at = now()
        where user_id = $1
          and job_id = $2
@@ -2030,6 +2277,9 @@ export async function markSpendJobStepProofReady(
         input.inputNullifierHex ?? null,
         input.recipientOutputCommitmentHex ?? null,
         input.recipientEncryptedOutput ?? null,
+        input.leaseOwner ?? null,
+        leaseSeconds,
+        input.encryptedChangeNoteCiphertext ?? null,
       ],
     ),
     "Spend job step is no longer proving",
@@ -2046,20 +2296,60 @@ export async function markSpendJobStepProofReady(
   });
 }
 
+export async function markSpendJobStepPrepared(
+  db: QueryClient,
+  input: {
+    userId: string;
+    jobId: string;
+    stepId: string;
+    relayBody: Record<string, unknown>;
+    outputCommitmentHex: string;
+    outputAmountUnits: string;
+    encryptedChangeNoteCiphertext: string | null;
+    inputNullifierHex?: string | null;
+    recipientOutputCommitmentHex?: string | null;
+    recipientEncryptedOutput?: string | null;
+    leaseOwner: string;
+    leaseSeconds?: number;
+  },
+): Promise<void> {
+  await markSpendJobStepProofReady(db, {
+    userId: input.userId,
+    jobId: input.jobId,
+    stepId: input.stepId,
+    relayBody: input.relayBody,
+    outputCommitmentHex: input.outputCommitmentHex,
+    outputAmountUnits: input.outputAmountUnits,
+    inputNullifierHex: input.inputNullifierHex ?? null,
+    recipientOutputCommitmentHex: input.recipientOutputCommitmentHex ?? null,
+    recipientEncryptedOutput: input.recipientEncryptedOutput ?? null,
+    encryptedChangeNoteCiphertext: input.encryptedChangeNoteCiphertext,
+    leaseOwner: input.leaseOwner,
+    leaseSeconds: input.leaseSeconds,
+  });
+}
+
 export async function markSpendJobStepRelaying(
   db: QueryClient,
-  input: { userId: string; jobId: string; stepId: string },
+  input: { userId: string; jobId: string; stepId: string; leaseOwner?: string | null; leaseSeconds?: number | null },
 ): Promise<void> {
+  const leaseSeconds = Math.max(30, Math.min(input.leaseSeconds ?? 900, 900));
   assertMutation(
     await db.query(
       `update spend_job_steps set
          status = 'relaying',
+         lease_owner = coalesce($4, lease_owner),
+         lease_expires_at = case
+           when $4::text is null then lease_expires_at
+           else now() + make_interval(secs => $5)
+         end,
+         last_heartbeat_at = now(),
          updated_at = now()
        where user_id = $1
          and job_id = $2
          and id = $3
          and status = 'proof_ready'`,
-      [input.userId, input.jobId, input.stepId],
+      [input.userId, input.jobId, input.stepId, input.leaseOwner ?? null, leaseSeconds],
     ),
     "Spend job step is no longer proof-ready",
   );
@@ -2078,6 +2368,84 @@ export async function lockSpendJobStep(
   await markSpendJobStepRelaying(db, input);
 }
 
+export async function heartbeatSpendJobLease(
+  db: QueryClient,
+  input: {
+    userId: string;
+    jobId: string;
+    stepId: string;
+    leaseOwner: string;
+    leaseSeconds?: number;
+  },
+): Promise<void> {
+  const leaseSeconds = Math.max(30, Math.min(input.leaseSeconds ?? 900, 900));
+  await db.query(
+    `update spend_job_steps set
+       lease_owner = $4,
+       lease_expires_at = now() + make_interval(secs => $5),
+       last_heartbeat_at = now(),
+       updated_at = now()
+     where user_id = $1
+       and job_id = $2
+       and id = $3
+       and status in ('proving', 'proof_ready', 'relaying', 'submitted', 'needs_reconcile')
+       and (lease_owner is null or lease_owner = $4)`,
+    [input.userId, input.jobId, input.stepId, input.leaseOwner, leaseSeconds],
+  );
+  await db.query(
+    `update spend_jobs set
+       lease_owner = $3,
+       lease_expires_at = now() + make_interval(secs => $4),
+       last_heartbeat_at = now(),
+       updated_at = now()
+     where user_id = $1
+       and id = $2
+       and status in ('running', 'waiting_retry', 'needs_reconcile', 'failed_recoverable')`,
+    [input.userId, input.jobId, input.leaseOwner, leaseSeconds],
+  );
+}
+
+export async function markSpendJobRecoveredSubmittedTx(
+  db: QueryClient,
+  input: {
+    userId: string;
+    jobId: string;
+    stepId: string;
+    txHash: string;
+    leaseOwner: string;
+    leaseSeconds?: number;
+  },
+): Promise<void> {
+  const leaseSeconds = Math.max(30, Math.min(input.leaseSeconds ?? 900, 900));
+  assertMutation(
+    await db.query(
+      `update spend_job_steps set
+         status = 'submitted',
+         tx_hash = $4,
+         error_class = null,
+         error_message = null,
+         retry_after = null,
+         lease_owner = $5,
+         lease_expires_at = now() + make_interval(secs => $6),
+         last_heartbeat_at = now(),
+         updated_at = now()
+       where user_id = $1
+         and job_id = $2
+         and id = $3
+         and status in ('proof_ready', 'relaying', 'submitted', 'needs_reconcile', 'retry_wait')`,
+      [input.userId, input.jobId, input.stepId, input.txHash, input.leaseOwner, leaseSeconds],
+    ),
+    "Spend job recovered transaction could not be checkpointed",
+  );
+  await appendSpendJobEvent(db, {
+    userId: input.userId,
+    jobId: input.jobId,
+    eventType: "spend_job_step_tx_recovered",
+    eventData: { stepId: input.stepId },
+    txHash: input.txHash,
+  });
+}
+
 export async function markSpendJobSubmitted(
   db: QueryClient,
   input: {
@@ -2088,8 +2456,11 @@ export async function markSpendJobSubmitted(
     outputCommitmentHex: string;
     outputAmountUnits: string;
     encryptedChangeNoteCiphertext?: string | null;
+    leaseOwner?: string | null;
+    leaseSeconds?: number | null;
   },
 ): Promise<void> {
+  const leaseSeconds = Math.max(30, Math.min(input.leaseSeconds ?? 900, 900));
   assertMutation(
     await db.query(
       `update spend_job_steps set
@@ -2100,14 +2471,17 @@ export async function markSpendJobSubmitted(
          encrypted_change_note_ciphertext = coalesce($7, encrypted_change_note_ciphertext),
          error_class = null,
          error_message = null,
-         lease_owner = null,
-         lease_expires_at = null,
-         last_heartbeat_at = null,
+         lease_owner = coalesce($8, lease_owner),
+         lease_expires_at = case
+           when $8::text is null then lease_expires_at
+           else now() + make_interval(secs => $9)
+         end,
+         last_heartbeat_at = now(),
          updated_at = now()
        where user_id = $1
          and job_id = $2
          and id = $3
-         and status = 'relaying'`,
+         and status in ('relaying', 'submitted')`,
       [
         input.userId,
         input.jobId,
@@ -2116,6 +2490,8 @@ export async function markSpendJobSubmitted(
         input.outputCommitmentHex,
         input.outputAmountUnits,
         input.encryptedChangeNoteCiphertext ?? null,
+        input.leaseOwner ?? null,
+        leaseSeconds,
       ],
     ),
     "Spend job step is no longer relaying",
@@ -2144,102 +2520,96 @@ export async function markSpendJobRetryableFailure(
   },
 ): Promise<void> {
   const retryAfter = input.retryAfter === undefined ? new Date(Date.now() + 15_000) : input.retryAfter;
-  const failedStep = one(
-    await db.query<SpendJobStepRow>(
-      `update spend_job_steps set
-         status = case
-           when $6::timestamptz is null then 'failed_final'
-           when attempts >= $7 then 'failed_final'
-           else 'retry_wait'
-         end,
-         error_class = $4,
-         error_message = $5,
-         retry_after = case
-           when $6::timestamptz is null then null
-           when attempts >= $7 then null
-           else $6::timestamptz
-         end,
-         lease_owner = null,
-         lease_expires_at = null,
-         last_heartbeat_at = null,
-         updated_at = now()
-       where user_id = $1
-         and job_id = $2
-         and id = $3
-         and status not in ('confirmed', 'failed_final', 'needs_reconcile')
-       returning *`,
-      [
-        input.userId,
-        input.jobId,
-        input.stepId,
-        input.errorClass,
-        input.errorMessage,
-        retryAfter,
-        MAX_SPEND_JOB_STEP_ATTEMPTS,
-      ],
-    ),
-  );
-  assertMutation(
-    { rowCount: failedStep ? 1 : 0, rows: failedStep ? [failedStep] : [] },
-    "Spend job step is no longer retryable",
-  );
-  assertMutation(
-    await db.query(
-      `update spend_jobs set
-         status = case
-           when failed_step.status = 'failed_final' then 'failed_recoverable'
-           else 'waiting_retry'
-         end,
-         error_class = $3,
-         error_message = $4,
-         retry_after = case
-           when failed_step.status = 'failed_final' then null
-           else $5::timestamptz
-         end,
-         reconcile_after = case
-           when failed_step.status = 'failed_final' then now()
-           else null
-         end,
-         lease_owner = null,
-         lease_expires_at = null,
-         last_heartbeat_at = null,
-         updated_at = now()
-       from (
-         select status
-         from spend_job_steps
-         where user_id = $1 and job_id = $2 and id = $6
-       ) failed_step
-       where user_id = $1
-         and id = $2
-         and status <> 'completed'`,
-      [
-        input.userId,
-        input.jobId,
-        input.errorClass,
-        input.errorMessage,
-        retryAfter,
-        input.stepId,
-      ],
-    ),
-    "Spend job is already completed",
-  );
-  const eventType =
-    failedStep?.status === "failed_final"
+  await withTransaction(db, async (client) => {
+    const failedStep = one(
+      await client.query<SpendJobStepRow>(
+        `update spend_job_steps set
+           status = case
+             when $6::timestamptz is null then 'failed_final'
+             else 'retry_wait'
+           end,
+           error_class = $4,
+           error_message = $5,
+           retry_after = case
+             when $6::timestamptz is null then null
+             else $6::timestamptz
+           end,
+           lease_owner = null,
+           lease_expires_at = null,
+           last_heartbeat_at = null,
+           updated_at = now()
+         where user_id = $1
+           and job_id = $2
+           and id = $3
+           and status not in ('confirmed', 'failed_final', 'needs_reconcile')
+         returning *`,
+        [
+          input.userId,
+          input.jobId,
+          input.stepId,
+          input.errorClass,
+          input.errorMessage,
+          retryAfter,
+        ],
+      ),
+    );
+    assertMutation(
+      { rowCount: failedStep ? 1 : 0, rows: failedStep ? [failedStep] : [] },
+      "Spend job step is no longer retryable",
+    );
+    const failedFinal = failedStep?.status === "failed_final";
+    assertMutation(
+      await client.query(
+        `update spend_jobs set
+           status = case
+             when $6::boolean then 'failed_recoverable'
+             else 'waiting_retry'
+           end,
+           error_class = $3,
+           error_message = $4,
+           retry_after = case
+             when $6::boolean then null
+             else $5::timestamptz
+           end,
+           reconcile_after = case
+             when $6::boolean then now()
+             else null
+           end,
+           lease_owner = null,
+           lease_expires_at = null,
+           last_heartbeat_at = null,
+           updated_at = now()
+         where user_id = $1
+           and id = $2
+           and status <> 'completed'`,
+        [
+          input.userId,
+          input.jobId,
+          input.errorClass,
+          input.errorMessage,
+          retryAfter,
+          failedFinal,
+        ],
+      ),
+      "Spend job is already completed",
+    );
+    const eventType = failedFinal
       ? "spend_job_failed_recoverable"
       : "spend_job_retry_wait";
-  await appendSpendJobEvent(db, {
-    userId: input.userId,
-    jobId: input.jobId,
-    eventType,
-    eventData: {
-      stepId: input.stepId,
-      errorClass: input.errorClass,
-      retryAfter:
-        failedStep?.status === "failed_final" || retryAfter === null
-          ? null
-          : retryAfter.toISOString(),
-      maxAttempts: MAX_SPEND_JOB_STEP_ATTEMPTS,
-    },
+    await appendSpendJobEvent(client, {
+      userId: input.userId,
+      jobId: input.jobId,
+      eventType,
+      eventData: {
+        stepId: input.stepId,
+        errorClass: input.errorClass,
+        retryAfter:
+          failedFinal || retryAfter === null
+            ? null
+            : retryAfter.toISOString(),
+        retryPolicy: failedFinal ? "manual_review" : "capped_backoff",
+      },
+    });
   });
 }
 
@@ -2349,6 +2719,10 @@ export async function storeSpendJobStepResult(
       txHash: string;
     } | null;
     isFinalStep: boolean;
+    nextExecutionPackage?: {
+      encryptedPackageCiphertext: string;
+      expiresAt: Date;
+    } | null;
   },
 ): Promise<void> {
   await withTransaction(db, async (client) => {
@@ -2506,7 +2880,7 @@ export async function storeSpendJobStepResult(
         },
         txHash: input.recipientNote.txHash,
       });
-      await createNotification(client, {
+      await createNotificationOnce(client, {
         userId: input.recipientNote.recipientUserId,
         activityEventId: recipientActivity?.id,
         type: "private_note_received",
@@ -2514,7 +2888,7 @@ export async function storeSpendJobStepResult(
         entityKind: "incoming_note",
         entityId: incomingNote?.id,
         title: "Private note received",
-        body: `${input.recipientNote.amountUnits} USDC is ready to claim.`,
+        body: `${formatUsdcUnits(input.recipientNote.amountUnits)} is ready to claim.`,
         actionUrl: "/wallet?mode=private&tab=dashboard",
       });
     }
@@ -2579,10 +2953,16 @@ export async function storeSpendJobStepResult(
            last_heartbeat_at = null,
            execution_package_ciphertext = case
              when (select count(*) from spend_job_steps where user_id = $1 and job_id = $2 and status = 'confirmed') = total_recipients then null
+             when $7::text is not null then $7::text
              else execution_package_ciphertext
+           end,
+           execution_package_expires_at = case
+             when $8::timestamptz is not null then $8::timestamptz
+             else execution_package_expires_at
            end,
            execution_package_deleted_at = case
              when (select count(*) from spend_job_steps where user_id = $1 and job_id = $2 and status = 'confirmed') = total_recipients then coalesce(execution_package_deleted_at, now())
+             when $7::text is not null then null
              else execution_package_deleted_at
            end,
            updated_at = now()
@@ -2594,6 +2974,8 @@ export async function storeSpendJobStepResult(
           input.changeNote?.commitmentHex ?? null,
           input.changeNote?.amountUnits ?? null,
           input.changeNote?.leafIndex ?? null,
+          input.nextExecutionPackage?.encryptedPackageCiphertext ?? null,
+          input.nextExecutionPackage?.expiresAt ?? null,
         ],
       ),
       "Spend job could not be updated",
@@ -2634,7 +3016,7 @@ export async function storeSpendJobStepResult(
       [input.userId, input.jobId, completedTxHash],
     );
 
-    await appendSpendJobEvent(client, {
+    const senderActivity = await appendSpendJobEvent(client, {
       userId: input.userId,
       jobId: input.jobId,
       eventType: input.isFinalStep ? "spend_job_completed" : "spend_job_step_confirmed",
@@ -2644,5 +3026,19 @@ export async function storeSpendJobStepResult(
       },
       txHash: input.changeNote?.txHash ?? null,
     });
+
+    if (input.isFinalStep) {
+      await createNotificationOnce(client, {
+        userId: input.userId,
+        activityEventId: senderActivity?.id,
+        type: "private_payment_sent",
+        severity: "success",
+        entityKind: "spend_job",
+        entityId: input.jobId,
+        title: "Private payment sent",
+        body: "All private payment steps are complete.",
+        actionUrl: "/wallet?mode=private&tab=activity",
+      });
+    }
   });
 }

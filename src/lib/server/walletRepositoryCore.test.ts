@@ -14,6 +14,7 @@ import {
   findRegisteredRecipient,
   getEncryptedVault,
   createNotification,
+  createNotificationOnce,
   listNotifications,
   listPublicTransactions,
   listWalletContacts,
@@ -148,6 +149,17 @@ test("wallet repository writes every app table through parameterized SQL", async
     body: "Your private payment was submitted.",
     actionUrl: "/wallet?tab=activity",
   });
+  await createNotificationOnce(db, {
+    userId: "user-1",
+    activityEventId: "activity-1",
+    type: "spend_job_submitted",
+    severity: "info",
+    entityKind: "spend_job",
+    entityId: "job-1",
+    title: "Payment submitted",
+    body: "Your private payment was submitted.",
+    actionUrl: "/wallet?tab=activity",
+  });
   await listNotifications(db, { userId: "user-1", unreadOnly: true });
   await markNotificationsRead(db, {
     userId: "user-1",
@@ -201,6 +213,30 @@ test("wallet repository writes every app table through parameterized SQL", async
     assert.match(query.text, /\$\d/);
     assert.ok(query.values && query.values.length > 0);
   }
+});
+
+test("createNotificationOnce dedupes retry notifications by user type and entity", async () => {
+  const db = new RecordingDb();
+
+  await createNotificationOnce(db, {
+    userId: "user-1",
+    activityEventId: "activity-1",
+    type: "private_payment_sent",
+    severity: "success",
+    entityKind: "spend_job",
+    entityId: "job-1",
+    title: "Private payment sent",
+    body: "All private payment steps are complete.",
+    actionUrl: "/wallet?mode=private&tab=activity",
+  });
+
+  const query = db.last();
+  assert.match(query.text, /insert into notification_inbox/i);
+  assert.match(query.text, /where not exists/i);
+  assert.match(query.text, /user_id = \$1::uuid/i);
+  assert.match(query.text, /type = \$3/i);
+  assert.match(query.text, /entity_kind = \$5/i);
+  assert.match(query.text, /entity_id is not distinct from \$6::uuid/i);
 });
 
 test("wallet repository normalizes emails and only exposes encrypted secret material columns", async () => {

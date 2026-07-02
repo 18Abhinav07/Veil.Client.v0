@@ -3,7 +3,12 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { encryptPrivateNote } from "@/lib/noteCrypto";
-import { findNoteLeafIndex, waitForTransaction } from "@/lib/stellar";
+import {
+  findNoteLeafIndex,
+  findPoolCommitmentEventInPool,
+  getLatestLedgerSequence,
+  waitForTransaction,
+} from "@/lib/stellar";
 import {
   decryptBackgroundExecutionPackage,
   encryptBackgroundExecutionPackage,
@@ -17,12 +22,17 @@ import { isTransientProverLag, isTransientRelayLag } from "@/lib/server/bulkWith
 import { getPgPool } from "@/lib/server/db";
 import { getInternalServiceHeaders, requireInternalServiceAccess } from "@/lib/server/internalServiceAuth";
 import { fetchJsonWithRetry } from "@/lib/server/upstreamRetry";
+import { getWalletServerEnv } from "@/lib/server/serverEnv";
 import {
+  claimNextReconcilableBackgroundSpendJobStep,
   claimNextRunnableSpendJobStep,
   deleteSpendJobExecutionPackage,
   getNextBackgroundSpendJobCandidate,
+  heartbeatSpendJobLease,
+  markSpendJobRecoveredSubmittedTx,
   markSpendJobNeedsReconcile,
   markSpendJobRetryableFailure,
+  markSpendJobStepPrepared,
   markSpendJobStepProofReady,
   markSpendJobStepRelaying,
   markSpendJobSubmitted,
@@ -36,10 +46,11 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 800;
 
-const PROVER_API = process.env.PROVER_API_URL ?? "http://127.0.0.1:3001";
+const SERVER_ENV = getWalletServerEnv();
+const PROVER_API = SERVER_ENV.PROVER_API_URL ?? "http://127.0.0.1:3001";
 const RELAYER_URL =
-  process.env.RELAYER_URL ??
-  process.env.NEXT_PUBLIC_RELAYER_URL ??
+  SERVER_ENV.RELAYER_URL ??
+  SERVER_ENV.NEXT_PUBLIC_RELAYER_URL ??
   "http://127.0.0.1:3000";
 
 async function proveWithdraw(body: unknown): Promise<WithdrawResponse> {
@@ -96,6 +107,8 @@ async function relay(relayBody: RelayBody): Promise<{ txHash: string }> {
 function repository(): BackgroundSpendWorkerRepository {
   const db = getPgPool();
   return {
+    claimNextReconcilableBackgroundSpendJobStep: (input) =>
+      claimNextReconcilableBackgroundSpendJobStep(db, input),
     getNextBackgroundSpendJobCandidate: (input) =>
       getNextBackgroundSpendJobCandidate(db, input),
     claimNextRunnableSpendJobStep: (input) =>
@@ -105,8 +118,16 @@ function repository(): BackgroundSpendWorkerRepository {
         ...input,
         relayBody: input.relayBody,
       }),
+    markSpendJobStepPrepared: (input) =>
+      markSpendJobStepPrepared(db, {
+        ...input,
+        relayBody: input.relayBody,
+      }),
     markSpendJobStepRelaying: (input) => markSpendJobStepRelaying(db, input),
     markSpendJobSubmitted: (input) => markSpendJobSubmitted(db, input),
+    markSpendJobRecoveredSubmittedTx: (input) =>
+      markSpendJobRecoveredSubmittedTx(db, input),
+    heartbeatSpendJobLease: (input) => heartbeatSpendJobLease(db, input),
     storeSpendJobStepResult: (input) => storeSpendJobStepResult(db, input),
     updateSpendJobExecutionPackage: (input) =>
       updateSpendJobExecutionPackage(db, {
@@ -132,7 +153,7 @@ export async function POST(request: Request) {
   let key: string;
   try {
     key = readBackgroundExecutionKey({
-      JOB_EXECUTION_ENCRYPTION_KEY: process.env.JOB_EXECUTION_ENCRYPTION_KEY,
+      JOB_EXECUTION_ENCRYPTION_KEY: SERVER_ENV.JOB_EXECUTION_ENCRYPTION_KEY,
     });
   } catch (error) {
     return NextResponse.json(
@@ -143,6 +164,7 @@ export async function POST(request: Request) {
 
   const result = await advanceOneBackgroundSpendStep({
     leaseOwner: `spend-worker-${randomUUID()}`,
+    leaseSeconds: 900,
     repository: repository(),
     decryptPackage: (encrypted) =>
       decryptBackgroundExecutionPackage(encrypted, { key }),
@@ -159,6 +181,11 @@ export async function POST(request: Request) {
     relay,
     waitForTransaction,
     findNoteLeafIndex,
+    findPoolCommitmentEvent: (commitmentHex, startLedger) =>
+      findPoolCommitmentEventInPool(commitmentHex, startLedger, {
+        timeoutMs: 45_000,
+      }),
+    getLatestLedger: getLatestLedgerSequence,
   });
 
   return NextResponse.json({ result });

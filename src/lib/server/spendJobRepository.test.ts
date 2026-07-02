@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   appendSpendJobEvent,
+  claimNextReconcilableBackgroundSpendJobStep,
   claimNextRunnableSpendJobStep,
   createSpendJob,
   deleteSpendJobExecutionPackage,
@@ -14,9 +15,11 @@ import {
   markSpendJobNeedsReconcile,
   markSpendJobRetryableFailure,
   markSpendJobSubmitted,
+  markSpendJobStepPrepared,
   markSpendJobStepProofReady,
   markSpendJobStepProving,
   markSpendJobStepRelaying,
+  resetProofReadySpendJobStepForReprove,
   storeSpendJobStepResult,
   updateSpendJobExecutionPackage,
   type QueryClient,
@@ -325,7 +328,7 @@ test("spend job step claim is sequential and bound to the active source note", a
   assert.match(sql, /j\.active_commitment_hex = \$3/i);
   assert.match(sql, /s\.source_commitment_hex = \$3/i);
   assert.match(sql, /j\.status in \('queued', 'running', 'waiting_retry', 'paused_needs_unlock', 'failed_recoverable'\)/i);
-  assert.match(sql, /s\.status in \('queued', 'retry_wait', 'proof_ready', 'proving', 'relaying'\)/i);
+  assert.match(sql, /s\.status in \('queued', 'retry_wait', 'proving'\)/i);
   assert.doesNotMatch(
     sql,
     /[^.]status in \('queued', 'retry_wait', 'proof_ready', 'proving', 'relaying'\)/i,
@@ -349,11 +352,9 @@ test("spend job step claim writes a durable lease for the runner", async () => {
   });
 
   const sql = db.combinedSql();
-  assert.match(sql, /s\.status = 'proof_ready'/i);
-  assert.match(
-    sql,
-    /s\.status = 'relaying'[\s\S]*?and s\.tx_hash is null[\s\S]*?and \(s\.lease_expires_at is null or s\.lease_expires_at <= now\(\)\)/i,
-  );
+  assert.match(sql, /s\.status = 'proving'/i);
+  assert.match(sql, /s\.status = 'proving'[\s\S]*?and s\.tx_hash is null[\s\S]*?and s\.lease_expires_at <= now\(\)/i);
+  assert.doesNotMatch(sql, /s\.status in \('proof_ready', 'proving', 'relaying'\)/i);
   assert.match(sql, /s\.lease_expires_at <= now\(\)/i);
   assert.match(sql, /s\.status in \('queued', 'retry_wait'\) and s\.lease_expires_at is null/i);
   assert.match(sql, /lease_owner = \$6/i);
@@ -365,6 +366,36 @@ test("spend job step claim writes a durable lease for the runner", async () => {
   assert.ok(
     db.queries.some((query) => query.values?.includes("worker-a") && query.values?.includes(90)),
     "expected lease owner and lease duration to be bound",
+  );
+});
+
+test("interactive proof-ready step without submitted tx can be reset for re-prove", async () => {
+  const db = new RecordingDb();
+
+  await resetProofReadySpendJobStepForReprove(db, {
+    userId: "user-1",
+    jobId: "job-1",
+    sourceCommitmentHex: "active-commitment",
+    sourceAmountUnits: "3000000000",
+    sourceLeafIndex: 42,
+  });
+
+  const sql = db.combinedSql();
+  assert.match(sql, /status = 'queued'/i);
+  assert.match(sql, /relay_body = null/i);
+  assert.match(sql, /output_commitment_hex = null/i);
+  assert.match(sql, /recipient_output_commitment_hex = null/i);
+  assert.match(sql, /encrypted_change_note_ciphertext = null/i);
+  assert.match(sql, /s\.status = 'proof_ready'/i);
+  assert.match(sql, /s\.tx_hash is null/i);
+  assert.match(sql, /s\.encrypted_change_note_ciphertext is null/i);
+  assert.match(sql, /j\.execution_mode = 'interactive'/i);
+  assert.match(sql, /j\.active_commitment_hex = \$3/i);
+  assert.match(sql, /s\.source_commitment_hex = \$3/i);
+  assert.match(sql, /previous\.status <> 'confirmed'/i);
+  assert.ok(
+    db.queries.some((query) => query.values?.includes("spend_job_step_reprove_reset")),
+    "expected a reset audit event to be recorded",
   );
 });
 
@@ -415,16 +446,65 @@ test("background worker can select active packages and reclaim expired proving s
   assert.match(sql, /execution_package_deleted_at is null/i);
   assert.match(sql, /execution_package_expires_at is not null/i);
   assert.doesNotMatch(sql, /execution_package_expires_at > now\(\)/i);
-  assert.match(sql, /s\.status in \('queued', 'retry_wait', 'proof_ready', 'proving', 'relaying'\)/i);
+  assert.match(sql, /s\.status in \('queued', 'retry_wait', 'proving'\)/i);
   assert.match(sql, /s\.tx_hash is null/i);
-  assert.match(sql, /s\.status = 'proof_ready'/i);
-  assert.match(
-    sql,
-    /s\.status = 'relaying'[\s\S]*?and s\.tx_hash is null[\s\S]*?and \(s\.lease_expires_at is null or s\.lease_expires_at <= now\(\)\)/i,
-  );
+  assert.match(sql, /s\.status = 'proving'/i);
+  assert.match(sql, /s\.status = 'proving'[\s\S]*?and s\.tx_hash is null[\s\S]*?and s\.lease_expires_at <= now\(\)/i);
+  assert.doesNotMatch(sql, /s\.status in \('proof_ready', 'proving', 'relaying'\)/i);
   assert.match(sql, /s\.lease_expires_at <= now\(\)/i);
   assert.match(sql, /s\.status in \('queued', 'retry_wait'\) and s\.lease_expires_at is null/i);
+  assert.match(sql, /not exists\s*\(/i);
+  assert.match(sql, /previous\.ordinal < s\.ordinal/i);
+  assert.match(sql, /previous\.status <> 'confirmed'/i);
   assert.match(sql, /order by j\.created_at asc, s\.ordinal asc/i);
+});
+
+test("background reconcile pass can claim submitted work before normal queue advancement", async () => {
+  const db = new RecordingDb();
+
+  await claimNextReconcilableBackgroundSpendJobStep(db, {
+    leaseOwner: "worker-a",
+    leaseSeconds: 900,
+  });
+
+  const sql = db.combinedSql();
+  assert.match(sql, /execution_mode = 'background'/i);
+  assert.match(sql, /execution_package_ciphertext is not null/i);
+  assert.match(sql, /s\.status in \('submitted', 'needs_reconcile', 'relaying', 'proof_ready', 'retry_wait'\)/i);
+  assert.match(sql, /s\.retry_after is null or s\.retry_after <= now\(\)/i);
+  assert.match(sql, /s\.output_commitment_hex is not null/i);
+  assert.match(sql, /for update of s skip locked/i);
+  assert.match(sql, /lease_owner = \$1/i);
+});
+
+test("prepared spend job checkpoint persists encrypted change note before relay", async () => {
+  const db = new RecordingDb();
+
+  await markSpendJobStepPrepared(db, {
+    userId: "user-1",
+    jobId: "job-1",
+    stepId: "step-1",
+    relayBody: { prepared: true },
+    outputCommitmentHex: "change-commitment",
+    outputAmountUnits: "5000000000",
+    encryptedChangeNoteCiphertext: "encrypted-change-pending",
+    inputNullifierHex: "nullifier-1",
+    recipientOutputCommitmentHex: null,
+    recipientEncryptedOutput: null,
+    leaseOwner: "worker-a",
+    leaseSeconds: 900,
+  });
+
+  const sql = db.combinedSql();
+  assert.match(sql, /status = 'proof_ready'/i);
+  assert.match(sql, /encrypted_change_note_ciphertext = coalesce\(\$12, encrypted_change_note_ciphertext\)/i);
+  assert.ok(
+    db.queries.some((query) => query.values?.includes("encrypted-change-pending")),
+    "expected encrypted pending change note to be bound",
+  );
+  assert.match(sql, /lease_owner = coalesce\(\$10, lease_owner\)/i);
+  assert.match(sql, /else now\(\) \+ make_interval\(secs => \$11\)/i);
+  assert.doesNotMatch(sql, /lease_owner = null/i);
 });
 
 test("background worker rotates and deletes execution packages without exposing clear spend material", async () => {
@@ -456,7 +536,7 @@ test("background worker rotates and deletes execution packages without exposing 
   assert.doesNotMatch(sql, /notePrivateKeyHex/i);
 });
 
-test("retryable failures become recoverable after bounded automatic retries", async () => {
+test("retryable failures stay retryable and update the parent job atomically", async () => {
   const db = new RecordingDb();
 
   await markSpendJobRetryableFailure(db, {
@@ -469,19 +549,21 @@ test("retryable failures become recoverable after bounded automatic retries", as
   });
 
   const sql = db.combinedSql();
+  assert.match(sql, /begin/i);
   assert.match(sql, /when \$6::timestamptz is null then 'failed_final'/i);
-  assert.match(sql, /when attempts >= \$7 then 'failed_final'/i);
-  assert.match(sql, /case\s+when failed_step\.status = 'failed_final' then 'failed_recoverable'\s+else 'waiting_retry'\s+end/i);
+  assert.doesNotMatch(sql, /attempts >=/i);
+  assert.match(sql, /when \$6::boolean then 'failed_recoverable'/i);
   assert.match(sql, /else \$6::timestamptz/i);
   assert.match(sql, /else \$5::timestamptz/i);
   assert.match(sql, /reconcile_after = case/i);
+  assert.match(sql, /commit/i);
   assert.ok(
-    db.queries.some((query) => query.values?.includes("spend_job_retry_wait")),
+    db.queries.some((query) => query.values?.includes("spend_job_retry_wait") === true),
     "expected retry wait activity event to be persisted",
   );
   assert.ok(
-    db.queries.some((query) => JSON.stringify(query.values).includes("maxAttempts")),
-    "expected retry event payload to include the max attempt ceiling",
+    db.queries.some((query) => JSON.stringify(query.values ?? []).includes("capped_backoff")),
+    "expected retry event payload to include the retry policy",
   );
 });
 
@@ -540,9 +622,8 @@ test("spend job step transitions reject stale runner updates", async () => {
   assert.match(sql, /status in \('queued', 'retry_wait'\)/i);
   assert.match(sql, /status = 'proving'/i);
   assert.match(sql, /status = 'proof_ready'/i);
-  assert.match(sql, /lease_owner = null/i);
-  assert.match(sql, /lease_expires_at = null/i);
-  assert.match(sql, /last_heartbeat_at = null/i);
+  assert.match(sql, /lease_owner = coalesce\(\$10, lease_owner\)/i);
+  assert.match(sql, /last_heartbeat_at = now\(\)/i);
   assert.match(sql, /status = 'relaying'/i);
   assert.match(sql, /status = 'submitted'/i);
   assert.match(sql, /status not in \('confirmed', 'failed_final'\)/i);
@@ -666,6 +747,7 @@ test("stored Lane 2 result emits a recipient incoming-note notification", async 
   const sql = db.combinedSql();
   assert.match(sql, /insert into incoming_notes/i);
   assert.match(sql, /insert into notification_inbox/i);
+  assert.match(sql, /where not exists/i);
   assert.match(sql, /recipient_user_id/i);
   assert.ok(
     db.queries.some((query) => query.values?.includes("user-2")),
@@ -674,6 +756,55 @@ test("stored Lane 2 result emits a recipient incoming-note notification", async 
   assert.ok(
     db.queries.some((query) => query.values?.includes("private_note_received")),
     "expected private_note_received to be written as a bound value",
+  );
+  assert.ok(
+    db.queries.some((query) => query.values?.includes("100.00 USDC is ready to claim.")),
+    "expected recipient notification body to be formatted in USDC, not raw base units",
+  );
+  assert.ok(
+    !db.queries.some((query) => query.values?.includes("1000000000 USDC is ready to claim.")),
+    "expected raw base units to be absent from notification copy",
+  );
+});
+
+test("completed private spend emits a sender notification", async () => {
+  const db = new RecordingDb();
+
+  await storeSpendJobStepResult(db, {
+    userId: "user-1",
+    jobId: "job-1",
+    stepId: "step-1",
+    sourceNoteId: "note-1",
+    changeNote: {
+      commitmentHex: "change-commitment",
+      encryptedNoteCiphertext: "encrypted-change",
+      amountUnits: "2000000000",
+      leafIndex: 44,
+      txHash: "tx-one",
+    },
+    recipientNote: {
+      recipientUserId: "user-2",
+      commitmentHex: "recipient-commitment",
+      amountUnits: "1000000000",
+      encryptedOutput: "encrypted-recipient-output",
+      leafIndex: 45,
+      txHash: "tx-one",
+    },
+    isFinalStep: true,
+  });
+
+  assert.ok(
+    db.queries.some((query) => query.values?.includes("private_payment_sent")),
+    "expected private_payment_sent notification type",
+  );
+  assert.match(db.combinedSql(), /where not exists/i);
+  assert.ok(
+    db.queries.some((query) => query.values?.includes("Private payment sent")),
+    "expected sender notification title",
+  );
+  assert.ok(
+    db.queries.some((query) => query.values?.includes("/wallet?mode=private&tab=activity")),
+    "expected sender notification to point at private activity",
   );
 });
 

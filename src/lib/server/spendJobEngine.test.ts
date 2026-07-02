@@ -4,9 +4,10 @@ import assert from "node:assert/strict";
 import type { RelayBody, WithdrawResponse } from "@/types";
 import {
   AlreadySpentNullifierError,
-  MAX_RETRYABLE_SPEND_ATTEMPTS,
+  MAX_SPEND_JOB_RETRY_DELAY_MS,
   advanceSpendJob,
   classifySpendJobError,
+  retryAfterFor,
   shouldRetrySpendJobFailure,
   type SpendJobAdvanceMaterial,
   type SpendJobAdvanceRepository,
@@ -255,8 +256,7 @@ test("advanceSpendJob sends Contract #9 to reconciliation and never stores a fak
   assert.equal(events.some((event) => event.startsWith("stored:")), false);
 });
 
-test("retryable failures are retried only while attempts remain and never after submission", () => {
-  assert.equal(MAX_RETRYABLE_SPEND_ATTEMPTS, 3);
+test("retryable pre-submit failures keep retrying with capped backoff", () => {
   assert.equal(
     shouldRetrySpendJobFailure({
       errorClass: "network_fetch",
@@ -267,11 +267,11 @@ test("retryable failures are retried only while attempts remain and never after 
   );
   assert.equal(
     shouldRetrySpendJobFailure({
-      errorClass: "network_fetch",
-      attempts: MAX_RETRYABLE_SPEND_ATTEMPTS,
+      errorClass: "prover_pool_state_lag",
+      attempts: 99,
       submittedTxHash: null,
     }),
-    false,
+    true,
   );
   assert.equal(
     shouldRetrySpendJobFailure({
@@ -288,5 +288,11 @@ test("retryable failures are retried only while attempts remain and never after 
       submittedTxHash: null,
     }),
     false,
+  );
+  const retryAfter = retryAfterFor("network_fetch", 99);
+  assert.ok(retryAfter, "network fetch should get a retry timestamp");
+  assert.ok(
+    retryAfter.getTime() - Date.now() <= MAX_SPEND_JOB_RETRY_DELAY_MS + 1000,
+    "retry delay should stay capped",
   );
 });

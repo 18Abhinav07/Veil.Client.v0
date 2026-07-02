@@ -112,7 +112,7 @@ export function buildMarketEnvUpdates({
     readString(marketPoolTreeDepth) ||
     readString(frontendEnv.MARKET_POOL_TREE_DEPTH) ||
     readString(backendEnv.MARKET_POOL_TREE_DEPTH) ||
-    "15";
+    "10";
   updates.MARKET_POOL_DEPLOYER_KEY_ID =
     readString(frontendEnv.MARKET_POOL_DEPLOYER_KEY_ID) ||
     readString(backendEnv.MARKET_POOL_DEPLOYER_KEY_ID) ||
