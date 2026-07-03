@@ -238,5 +238,5 @@ Before deployment:
 
 ## Related Repositories
 
-- Backend, contracts, prover, and relayer: `Veil.Server.v0`
+- Backend, contracts, prover, and relayer: `https://github.com/18Abhinav07/Veil.Server.v0`
 - Frontend, wallet UI, market UI, worker, and app API routes: `Veil.Client.v0`
