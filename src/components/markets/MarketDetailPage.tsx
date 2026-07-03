@@ -950,12 +950,12 @@ export default function MarketDetailPage({
                       </div>
                     </section>
 
-                    <div className="relative grid h-10 max-w-full grid-cols-5 items-center rounded-full bg-stone-100/60 p-1">
+                    <div className="relative flex h-10 max-w-full items-center rounded-full bg-stone-100/60 p-1 overflow-x-auto no-scrollbar whitespace-nowrap">
                       {detailTabs.map((tab) => (
                         <button
                           key={tab}
                           aria-pressed={detailTab === tab}
-                          className={`relative flex h-full min-w-0 items-center justify-center rounded-full px-1 text-[11px] font-bold transition sm:px-4 sm:text-xs ${
+                          className={`relative flex h-full min-w-0 flex-1 sm:flex-none items-center justify-center rounded-full px-3 text-[11px] font-bold transition sm:px-5 sm:text-xs shrink-0 ${
                             detailTab === tab
                               ? "bg-white text-stone-950 shadow-sm"
                               : "text-stone-500 hover:text-stone-950"

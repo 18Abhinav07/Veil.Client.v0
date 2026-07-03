@@ -79,7 +79,7 @@ export default function ExpandableCard({
                     </div>
                     <motion.p
                       layoutId={`cardItemSubtitle-${current.id}`}
-                      className="text-stone-500 text-xs truncate"
+                      className="text-stone-500 text-xs break-all"
                     >
                       {current.subtitle} {current.description ? `· ${current.description}` : ""}
                     </motion.p>
@@ -135,7 +135,7 @@ export default function ExpandableCard({
               <div className="flex w-full flex-col items-start justify-between gap-0.5 min-w-0">
                 <div className="flex w-full justify-between gap-2">
                   <motion.div
-                    className="text-stone-950 font-semibold text-sm truncate"
+                    className="text-stone-950 font-semibold text-sm truncate min-w-0 flex-1"
                     layoutId={`cardItemTitle-${item.id}`}
                   >
                     {item.title}
@@ -148,7 +148,7 @@ export default function ExpandableCard({
                   </motion.div>
                 </div>
                 <motion.div
-                  className="text-stone-500 text-xs truncate"
+                  className="text-stone-500 text-xs truncate w-full"
                   layoutId={`cardItemSubtitle-${item.id}`}
                 >
                   {item.subtitle} {item.description ? `· ${item.description}` : ""}

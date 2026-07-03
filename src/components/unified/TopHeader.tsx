@@ -215,21 +215,21 @@ export default function TopHeader({
   return (
     <header className="sticky top-0 z-30 border-b border-stone-200/60 bg-white/80 backdrop-blur-xl shrink-0">
       <div className="mx-auto flex h-16 max-w-[1600px] items-center justify-between px-4 md:px-6">
-        <h1 className="text-lg md:text-xl font-semibold tracking-tight text-stone-950 truncate max-w-[150px] sm:max-w-none">
+        <h1 className="text-base sm:text-lg md:text-xl font-semibold tracking-tight text-stone-950 truncate max-w-[100px] sm:max-w-none">
           {title}
         </h1>
 
-        <div className="flex items-center gap-3 md:gap-6">
+        <div className="flex items-center gap-1.5 sm:gap-3 md:gap-6">
           {/* Global Context Switcher (Soft Pill Switcher) */}
           <div className="relative flex h-9 md:h-10 items-center rounded-full bg-stone-100/60 p-0.5 md:p-1 border border-stone-200/30">
             <button
               type="button"
               onClick={() => onChangeMode("public")}
-              className="relative z-10 flex h-full w-16 sm:w-20 md:w-28 items-center justify-center rounded-full text-[10px] md:text-xs font-semibold tracking-wide transition-colors duration-200"
+              className="relative z-10 flex h-full w-9 sm:w-20 md:w-28 items-center justify-center rounded-full text-[10px] md:text-xs font-semibold tracking-wide transition-colors duration-200"
               style={{ color: mode === "public" ? "#0c0a09" : "#7c726a" }}
             >
-              <Globe size={11} className="mr-1 md:mr-1.5 opacity-80" />
-              Public
+              <Globe size={11} className="sm:mr-1.5 opacity-80" />
+              <span className="hidden sm:inline">Public</span>
               {mode === "public" && (
                 <motion.div
                   layoutId="mode-indicator"
@@ -241,11 +241,11 @@ export default function TopHeader({
             <button
               type="button"
               onClick={() => onChangeMode("private")}
-              className="relative z-10 flex h-full w-16 sm:w-20 md:w-28 items-center justify-center rounded-full text-[10px] md:text-xs font-semibold tracking-wide transition-colors duration-200"
+              className="relative z-10 flex h-full w-9 sm:w-20 md:w-28 items-center justify-center rounded-full text-[10px] md:text-xs font-semibold tracking-wide transition-colors duration-200"
               style={{ color: mode === "private" ? "#0c0a09" : "#7c726a" }}
             >
-              <Lock size={11} className="mr-1 md:mr-1.5 opacity-80" />
-              Private
+              <Lock size={11} className="sm:mr-1.5 opacity-80" />
+              <span className="hidden sm:inline">Private</span>
               {mode === "private" && (
                 <motion.div
                   layoutId="mode-indicator"
@@ -257,11 +257,11 @@ export default function TopHeader({
             <button
               type="button"
               onClick={() => onChangeMode("markets")}
-              className="relative z-10 flex h-full w-16 sm:w-20 md:w-28 items-center justify-center rounded-full text-[10px] md:text-xs font-semibold tracking-wide transition-colors duration-200"
+              className="relative z-10 flex h-full w-9 sm:w-20 md:w-28 items-center justify-center rounded-full text-[10px] md:text-xs font-semibold tracking-wide transition-colors duration-200"
               style={{ color: mode === "markets" ? "#0c0a09" : "#7c726a" }}
             >
-              <BarChart3 size={11} className="mr-1 md:mr-1.5 opacity-80" />
-              Markets
+              <BarChart3 size={11} className="sm:mr-1.5 opacity-80" />
+              <span className="hidden sm:inline">Markets</span>
               {mode === "markets" && (
                 <motion.div
                   layoutId="mode-indicator"
@@ -379,7 +379,7 @@ export default function TopHeader({
             )}
           </div>
 
-          <div className="flex items-center gap-2 border-l border-stone-200 pl-3 md:pl-6">
+          <div className="hidden sm:flex items-center gap-2 border-l border-stone-200 pl-3 md:pl-6">
             <div className="flex h-7 w-7 md:h-8 md:w-8 items-center justify-center rounded-full bg-stone-900 text-white">
               <span className="text-[10px] md:text-xs font-semibold uppercase">
                 {accountEmail?.charAt(0) ?? "U"}

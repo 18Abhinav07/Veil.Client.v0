@@ -117,7 +117,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
 }
 
 function shortHash(value: string) {
-  return value.length <= 18 ? value : `${value.slice(0, 10)}...${value.slice(-8)}`;
+  return value.length <= 16 ? value : `${value.slice(0, 8)}...${value.slice(-6)}`;
 }
 
 function titleCaseStatus(status: string) {
@@ -814,7 +814,7 @@ function ExpandedActivityRow({
                   return (
                     <div
                       key={stage.key}
-                      className={`rounded-lg border px-1.5 py-1.5 text-center text-[10px] font-semibold ${spendJobStageTone(state)}`}
+                      className={`rounded-lg border px-0.5 py-1 text-center text-[8px] sm:px-1.5 sm:py-1.5 sm:text-[10px] font-semibold ${spendJobStageTone(state)}`}
                     >
                       <div className={`mx-auto mb-1 h-1 w-1 rounded-full ${stageDotTone(state)}`} />
                       <div>{stage.label}</div>

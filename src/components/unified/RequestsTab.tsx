@@ -534,7 +534,7 @@ export default function RequestsTab({ wallet, initialContacts, initialRequests }
   return (
     <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr] max-w-[1600px] w-full mx-auto px-4 lg:px-6 lg:h-[calc(100vh-112px)] min-h-[calc(100vh-112px)] items-stretch">
       {/* LEFT COLUMN: PURE DITHER CONTAINER (BORDERLESS) */}
-      <div className="relative overflow-hidden rounded-3xl lg:h-full lg:max-h-full min-h-[300px]">
+      <div className="hidden lg:block relative overflow-hidden rounded-3xl lg:h-full lg:max-h-full min-h-[300px]">
         <DitherShader
           src="/images/Cash.png"
           gridSize={2}

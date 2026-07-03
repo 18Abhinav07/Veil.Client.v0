@@ -1298,9 +1298,9 @@ export default function PrivateDashboard({
                       </span>
                     </div>
 
-                    <div className="absolute inset-x-9 top-1/2 -translate-y-1/2 flex items-center justify-between pointer-events-none">
+                    <div className="absolute inset-x-4 sm:inset-x-9 top-1/2 -translate-y-1/2 flex items-center justify-between pointer-events-none">
                       <div className="h-px flex-1 bg-[repeating-linear-gradient(90deg,oklch(65%_0.035_88)_0_5px,transparent_5px_10px)] opacity-65" />
-                      <div className="mx-4 flex h-16 min-w-[200px] flex-col items-center justify-center rounded-[999px] border border-[oklch(70%_0.038_145/.6)] bg-[oklch(95%_0.018_92/.58)] px-8 text-center">
+                      <div className="mx-2 sm:mx-4 flex h-16 min-w-[140px] sm:min-w-[200px] flex-col items-center justify-center rounded-[999px] border border-[oklch(70%_0.038_145/.6)] bg-[oklch(95%_0.018_92/.58)] px-4 sm:px-8 text-center">
                         <span className="text-[8px] font-bold uppercase text-[oklch(42%_0.05_148)]">USDC</span>
                         <span className="text-2xl font-semibold tracking-normal text-[oklch(27%_0.055_82)]">
                           {hideBalance ? "••••" : formatStellarUnits(item.note.amountUnits, "").split(" ")[0]}
@@ -1611,7 +1611,7 @@ export default function PrivateDashboard({
 
                         <div className="space-y-3">
                           {sendMode === "lane1" && (
-                            <div className="flex gap-2">
+                            <div className="flex flex-col sm:flex-row gap-2">
                               <input 
                                 type="text" 
                                 placeholder="Email, @user id, or Stellar address"
@@ -1624,39 +1624,41 @@ export default function PrivateDashboard({
                                 autoComplete="off"
                                 spellCheck={false}
                               />
-                               {contactOptions.length > 0 && (
-                                <div className="relative h-12 w-12 shrink-0">
-                                  <select
-                                    className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
-                                    onChange={(e) => {
-                                      const contact = contactOptions.find((c) => c.id === e.target.value);
-                                      if (contact) {
-                                        updateRecipientField(item.id, "address", contact.otherStellarPublicKey ?? contact.otherEmail ?? "");
-                                      }
-                                      e.target.value = "";
-                                    }}
-                                    value=""
-                                  >
-                                    <option value="">Contacts</option>
-                                    {contactOptions.map((c) => (
-                                      <option key={c.id} value={c.id}>
-                                        {c.otherHandle ? `@${c.otherHandle}` : c.otherEmail ?? shortHash(c.otherStellarPublicKey ?? "")}
-                                      </option>
-                                    ))}
-                                  </select>
-                                  <div className="absolute inset-0 pointer-events-none flex items-center justify-center rounded-xl border border-stone-200 bg-white text-stone-600 hover:bg-stone-50 hover:text-stone-900 transition shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
-                                    <BookUser size={18} />
+                              <div className="flex gap-2 shrink-0 w-full sm:w-auto">
+                                {contactOptions.length > 0 && (
+                                  <div className="relative h-12 w-12 shrink-0">
+                                    <select
+                                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
+                                      onChange={(e) => {
+                                        const contact = contactOptions.find((c) => c.id === e.target.value);
+                                        if (contact) {
+                                          updateRecipientField(item.id, "address", contact.otherStellarPublicKey ?? contact.otherEmail ?? "");
+                                        }
+                                        e.target.value = "";
+                                      }}
+                                      value=""
+                                    >
+                                      <option value="">Contacts</option>
+                                      {contactOptions.map((c) => (
+                                        <option key={c.id} value={c.id}>
+                                          {c.otherHandle ? `@${c.otherHandle}` : c.otherEmail ?? shortHash(c.otherStellarPublicKey ?? "")}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <div className="absolute inset-0 pointer-events-none flex items-center justify-center rounded-xl border border-stone-200 bg-white text-stone-600 hover:bg-stone-50 hover:text-stone-900 transition shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+                                      <BookUser size={18} />
+                                    </div>
                                   </div>
-                                </div>
-                              )}
-                              <button
-                                type="button"
-                                disabled={busy || resolvingRecipient}
-                                onClick={() => void resolveDirectRecipient(item.id).catch((err) => setErrorMsg(String(err)))}
-                                className="h-12 rounded-xl bg-stone-950 px-5 text-[10px] font-bold uppercase tracking-wider text-white transition hover:bg-stone-800 disabled:opacity-50 shrink-0"
-                              >
-                                Find
-                              </button>
+                                )}
+                                <button
+                                  type="button"
+                                  disabled={busy || resolvingRecipient}
+                                  onClick={() => void resolveDirectRecipient(item.id).catch((err) => setErrorMsg(String(err)))}
+                                  className="h-12 flex-1 sm:flex-none rounded-xl bg-stone-950 px-5 text-[10px] font-bold uppercase tracking-wider text-white transition hover:bg-stone-800 disabled:opacity-50 shrink-0"
+                                >
+                                  Find
+                                </button>
+                              </div>
                             </div>
                           )}
                           
